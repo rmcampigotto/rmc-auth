@@ -2,53 +2,106 @@ import { IEncryptionService } from "./encryption-service.interface";
 import { IAuthUserService } from "./user-service.interface";
 
 export interface AuthOptions {
-  /** * Chave secreta para assinar o JWT. 
-   * @example 'minha-chave-ultra-secreta'
+  /**
+   * Secret key to sign the JWT.
+   * @example 'my-ultra-secret-key'
    */
   jwtSecret: string;
-  /** * Tempo de vida do Access Token. 
-   * Pode ser um número (segundos) ou uma string (ex: '15m', '1h').
+  /**
+   * Access Token lifetime.
+   * Can be a number (seconds) or a string (e.g. '15m', '1h').
    */
   expiresIn: string | number;
-  /** Nome do campo de login (ex: 'email', 'usename', etc). */
+  /** Name of the login field (e.g. 'email', 'username'). */
   identifierField: string;
-  /** Nome do campo de senha (ex: 'password', 'senha', etc). */
+  /** Name of the password field (e.g. 'password'). */
   passwordField: string;
-  /** Nome do campo que contém as roles no objeto do usuário (ex: 'roles', 'permissions') */
+  /** Name of the field that contains roles in the user object (e.g. 'roles', 'permissions'). */
   rolesField?: string;
-  /** Instância do serviço que implementa a busca de usuários no banco de dados */
+  /** Instance of the service that implements user lookup in the database. */
   userService: IAuthUserService;
-  /** Instância do serviço de criptografia (EncryptionService) */
+  /** Instance of the encryption service (EncryptionService). */
   encryptionService: IEncryptionService;
-  /** Ativa o sistema de Refresh Tokens e Rotação de Segurança */
+  /** Enable Refresh Token and security rotation. */
   useRefreshTokens?: boolean;
-  /** Segredo diferente para o Refresh Token (mais segurança) */
+  /** Separate secret for the Refresh Token (recommended for security). */
   refreshSecret?: string;
-  /** Tempo de expiração do Refresh Token. Exemplo: 3000. Valor em segundos ou string (ex: '7d'). */
+  /** Refresh Token expiration. Example: 3000. Value in seconds or string (e.g. '7d'). */
   refreshExpiresIn?: string | number;
-  /** Se true, o JwtAuthGuard será aplicado automaticamente em todas as rotas da aplicação */
+  /** If true, JwtAuthGuard is applied automatically to all application routes. */
   globalLock?: boolean;
   /**
-   * Emissor (issuer) padrão para o Access Token.
-   * Recomenda-se sempre definir.
+   * Default issuer for the Access Token.
+   * Recommended to always set.
    */
   jwtIssuer?: string;
 
   /**
-   * Audiência (audience) padrão para o Access Token.
-   * Recomenda-se sempre definir.
+   * Default audience for the Access Token.
+   * Recommended to always set.
    */
   jwtAudience?: string;
 
   /**
-   * Emissor específico para o Refresh Token.
-   * Se não informado, será usado jwtIssuer.
+   * Issuer for the Refresh Token.
+   * If not set, jwtIssuer is used.
    */
   refreshIssuer?: string;
 
   /**
-   * Audiência específica para o Refresh Token.
-   * Se não informado, será usado jwtAudience.
+   * Audience for the Refresh Token.
+   * If not set, jwtAudience is used.
    */
   refreshAudience?: string;
+
+  // --- Cybersecurity options ---
+
+  /**
+   * When true, enforces: jwtIssuer and jwtAudience required, access token expiresIn <= 1 hour,
+   * and JWT secret length >= 32. Use in production.
+   */
+  strictMode?: boolean;
+
+  /**
+   * Max length for identifier (login field). Prevents DoS.
+   * @default 256
+   */
+  maxIdentifierLength?: number;
+
+  /**
+   * Max length for password input. Prevents DoS (bcrypt has 72-byte limit).
+   * @default 1024
+   */
+  maxPasswordLength?: number;
+
+  /** Account lockout: max failed attempts before locking. Requires userService lockout methods. */
+  lockoutMaxAttempts?: number;
+  /** Account lockout: duration in minutes. */
+  lockoutDurationMinutes?: number;
+
+  /** Security audit: called after successful login. Do not throw. */
+  onLoginSuccess?: (userId: string, identifier: string) => void | Promise<void>;
+  /** Security audit: called after failed login (invalid credentials or locked). Do not throw. */
+  onLoginFailure?: (identifier: string, reason: string) => void | Promise<void>;
+  /** Security audit: called after successful refresh. Do not throw. */
+  onRefreshSuccess?: (userId: string) => void | Promise<void>;
+  /** Security audit: called after failed refresh. Do not throw. */
+  onRefreshFailure?: (reason: string) => void | Promise<void>;
+
+  /** Rate limit: max login attempts per key (e.g. IP + identifier) per window. */
+  rateLimitMaxAttempts?: number;
+  /** Rate limit: window in milliseconds. */
+  rateLimitWindowMs?: number;
+  /** Rate limit store. If not provided, rate limiting is skipped. */
+  rateLimitStore?: ILoginRateLimitStore;
+}
+
+/**
+ * Store for login rate limiting (e.g. by IP or IP+identifier).
+ * Implement with in-memory, Redis, or DB for distributed apps.
+ */
+export interface ILoginRateLimitStore {
+  getAttempts(key: string): Promise<number>;
+  increment(key: string, windowMs: number): Promise<number>;
+  reset(key: string): Promise<void>;
 }

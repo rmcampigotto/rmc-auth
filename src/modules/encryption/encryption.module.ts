@@ -1,9 +1,10 @@
 import { Module } from "@nestjs/common";
 import { EncryptionService } from "./encryption.service";
+import { EncryptionOptionsValidator } from "./encryption-options.validator";
 import { ConfigurableModuleClass } from "./encryption.module-definition";
 
 @Module({
-  providers: [EncryptionService],
+  providers: [EncryptionOptionsValidator, EncryptionService],
   exports: [EncryptionService],
 })
-export class EncryptionModule extends ConfigurableModuleClass {};
+export class EncryptionModule extends ConfigurableModuleClass {}

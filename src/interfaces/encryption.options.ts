@@ -1,32 +1,38 @@
 export interface EncryptionOptions {
   /**
-   * Número de rounds para o processamento do Bcrypt.
-   * Recomendado: 10 ou mais.
+   * Number of rounds for Bcrypt processing.
+   * Recommended: 10 or more.
    * @default 10
    */
   saltRounds?: number;
 
   /**
-   * Uma string opcional para ser adicionada à senha antes do hashing.
-   * Aumenta a segurança contra ataques de Rainbow Tables.
+   * Optional string to append to the password before hashing.
+   * Improves security against Rainbow Table attacks.
    */
   pepper?: string;
 
   /**
-   * Se true, a lib lança erro se a senha for "fraca"
-   * (ex: menos de 8 caracteres ou apenas números)
+   * If true, the library throws if the password is "weak"
+   * (e.g. fewer than 8 characters or numbers only).
    */
   strongPasswordValidation?: boolean;
 
   /**
-   * Algoritmo de hashing a ser utilizado.
+   * Hashing algorithm to use.
    * @default 'bcrypt'
    */
   algorithm?: "bcrypt" | "argon2";
 
   /**
-   * Se true, utiliza validação de senha baseada em OWASP (owasp-password-strength-test)
-   * em vez da validação simples de tamanho/numérica.
+   * If true, uses OWASP-based password validation (owasp-password-strength-test)
+   * instead of simple length/numeric validation.
    */
   useOwaspPolicy?: boolean;
-};
+
+  /**
+   * Optional breach check: if returns true, the password is considered compromised (e.g. HIBP).
+   * Called before hashing in hash(). Throw or return true to reject the password.
+   */
+  checkPasswordBreach?: (password: string) => Promise<boolean>;
+}

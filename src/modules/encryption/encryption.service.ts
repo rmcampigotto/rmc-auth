@@ -12,13 +12,20 @@ export class EncryptionService {
   ) {}
 
   /**
-   * Hash function configurável (bcrypt por padrão, opcionalmente Argon2).
-   * Pepper option utilization if informed in setup.
-   * @param {string} password - Password value. StrongPasswordValidation or OWASP policy if informed in setup.
-   * @returns {Promise<string>} - Crypt version of the password (Promise).
+   * Configurable hash function (bcrypt by default, optionally Argon2).
+   * Uses pepper if configured in setup.
+   * @param password - Plain password. StrongPasswordValidation or OWASP policy applied if configured.
+   * @returns Hashed password.
    */
   async hash(password: string): Promise<string> {
     if (!password) throw new Error("Password is required");
+
+    if (this.options.checkPasswordBreach) {
+      const breached = await this.options.checkPasswordBreach(password);
+      if (breached) {
+        throw new BadRequestException("This password has been found in a data breach. Choose a different password.");
+      }
+    }
 
     const algorithm = this.options.algorithm || "bcrypt";
 
@@ -52,10 +59,10 @@ export class EncryptionService {
   }
 
   /**
-   * Compare function. Pepper option utilization if informed in the setup.
-   * @param {string} password - Password value for authentication.
-   * @param {string} hash - Crypted password stored in the login system (db for example).
-   * @returns {Promise<boolean>} - True if the password matches, false if not (Promise).
+   * Compare plain password with stored hash. Uses pepper if configured.
+   * @param password - Plain password for authentication.
+   * @param hash - Stored hash (e.g. from database).
+   * @returns True if the password matches, false otherwise.
    */
   async compare(password: string, hash: string): Promise<boolean> {
     const algorithm = this.options.algorithm || "bcrypt";

@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    /* Básicos */
+    /* Base */
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
@@ -12,10 +12,10 @@
     "sourceMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    /* NestJS e Decorators*/
+    /* NestJS and decorators */
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    /* Rigor de Segurança e Qualidade */
+    /* Strictness and quality */
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -24,7 +24,7 @@
     "noUnusedParameters": false,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    /* Compatibilidade */
+    /* Compatibility */
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true

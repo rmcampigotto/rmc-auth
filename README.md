@@ -1,6 +1,7 @@
 # 🛡️ RMC-AUTH
 
 [![NPM Version](https://img.shields.io/npm/v/rmc-auth.svg)](https://www.npmjs.com/package/rmc-auth)
+[![CI](https://github.com/rmcampigotto/rmc-auth/actions/workflows/ci.yml/badge.svg)](https://github.com/rmcampigotto/rmc-auth/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![NestJS](https://img.shields.io/badge/built%20with-NestJS-red.svg)](https://nestjs.com/)
 
@@ -33,6 +34,8 @@ npm install --save-dev @types/passport-jwt @types/bcrypt
 
 > **Node**: Node 18+ (Argon2 & toolchain).
 
+A **minimal runnable example** is in [`examples/minimal`](examples/minimal).
+
 ---
 
 ## 🛠️ Configuration (Step by Step)
@@ -44,7 +47,7 @@ This allows the library to communicate with your database regardless of the ORM 
 
 ```typescript
 import { Injectable } from '@nestjs/common';
-import { IAuthUserService } from 'your-lib-name';
+import { IAuthUserService } from 'rmc-auth';
 import { PrismaService } from './prisma.service';
 
 @Injectable()
@@ -52,7 +55,7 @@ export class UsersService implements IAuthUserService {
   constructor(private prisma: PrismaService) {}
 
   // Used for Login
-  async findOneByField(field: string, value: any) {
+  async findOneByField(field: string, value: unknown) {
     return this.prisma.user.findFirst({ where: { [field]: value } });
   }
 
@@ -76,8 +79,8 @@ export class UsersService implements IAuthUserService {
 
 RMC-AUTH is split into two modules:
 
-- `EncryptionModule`: hashing de senha (bcrypt ou argon2, pepper, política de senha).
-- `AuthModule`: JWT, refresh tokens, guards, roles e integração com seu `UserService`.
+- `EncryptionModule`: password hashing (bcrypt or argon2, pepper, password policy).
+- `AuthModule`: JWT, refresh tokens, guards, roles and integration with your `UserService`.
 
 #### 2.1. Basic setup (Bcrypt + strong validation)
 
@@ -132,7 +135,7 @@ export class AppModule {}
 EncryptionModule.register({
   algorithm: 'argon2',
   pepper: process.env.AUTH_PEPPER,
-  // Ignora validação simples e usa política OWASP
+  // Use OWASP policy instead of simple validation
   useOwaspPolicy: true,
 });
 
@@ -167,55 +170,7 @@ AuthModule.registerAsync({
 
 ### 3. Authentication Controller
 
-Since the library handles the heavy lifting, your controller remains clean.
-Initialize the modules in your `AppModule`. We recommend using `registerAsync` to inject configuration.
-
-```typescript
-import { Module } from '@nestjs/common';
-import { AuthModule, EncryptionModule, EncryptionService } from 'your-lib-name';
-import { UsersService } from './users/users.service';
-
-@Module({
-  imports: [
-    // 1. Configure Encryption (Hashing)
-    EncryptionModule.register({
-      saltRounds: 12,
-      pepper: process.env.AUTH_PEPPER,
-      strongPasswordValidation: true,
-    }),
-
-    // 2. Configure Auth (JWT + Logic)
-    AuthModule.registerAsync({
-      inject: [UsersService, EncryptionService],
-      useFactory: (users: UsersService, encrypt: EncryptionService) => ({
-        // JWT Config
-        jwtSecret: process.env.JWT_SECRET,
-        expiresIn: 3600, // Short-lived access token
-        
-        // Database Mapping
-        identifierField: 'email',
-        passwordField: 'password',
-        rolesField: 'roles', // Field in your DB containing user roles
-        
-        // Dependency Injection
-        userService: users,
-        encryptionService: encrypt,
-        
-        // Advanced Security Features
-        globalLock: true, // 🛡️ Protects ALL routes by default
-        useRefreshTokens: true,
-        refreshSecret: process.env.JWT_REFRESH_SECRET,
-        refreshExpiresIn: 36000,
-      }),
-    }),
-  ],
-})
-export class AppModule {}
-```
-
----
-
-## 📖 Usage Guide
+Expose login and refresh; use `@Public()` so these routes are not protected by the global JWT guard.
 
 ```typescript
 import { Controller, Post, Body } from '@nestjs/common';
@@ -298,10 +253,37 @@ export class DashboardController {
 | `algorithm`            | `'bcrypt' \| 'argon2'`          | `'bcrypt'`  | Hashing algorithm used for `hash` / `compare`.                              |
 | `useOwaspPolicy`       | `boolean`                       | `false`     | If `true`, enforces OWASP password-strength rules instead of simple checks. |
 
+### Exported types (TypeScript)
+
+- `JwtPayload` — JWT claims after verification (`sub`, `username`, `roles?`). Use when decoding tokens or typing payloads.
+- `RequestUser` — Object attached to `request.user` after JWT validation (`id`, `username`, `roles?`). Use to type route handlers.
+- `AuthTokens` — Return type of `login()` and `refresh()`: `{ accessToken: string; refreshToken: string | null }`.
+
+Example:
+
+```typescript
+import { RequestUser } from 'rmc-auth';
+
+@Get('me')
+getProfile(@Request() req: { user: RequestUser }) {
+  return { id: req.user.id, username: req.user.username, roles: req.user.roles };
+}
+```
+
+### Guards and decorators
+
+| Export           | Description |
+|------------------|-------------|
+| `@Public()`      | Marks a route as public (no JWT required). Use when `globalLock` is `true`. |
+| `@Authorize(...roles)` | Restricts access to users that have at least one of the given roles. Composes `JwtAuthGuard` + `RolesGuard`. |
+| `Roles(...roles)` | Metadata for roles; used by `RolesGuard`. |
+| `JwtAuthGuard`    | Guard that validates the JWT and attaches the user to the request. |
+| `RolesGuard`      | Guard that checks the user has one of the required roles. |
+
 ### Interfaces
 
-- `IAuthUserService` (`src/interfaces/user-service.interface.ts`)
-- `IEncryptionService` (`src/interfaces/encryption-service.interface.ts`)
+- `IAuthUserService` — Implement to plug your user/database layer.
+- `IEncryptionService` — Implemented by `EncryptionService`; inject when using `AuthModule.registerAsync`.
 
 These allow you to plug in **your own services** while keeping RMC-AUTH fully type-safe and testable.
 
@@ -312,7 +294,53 @@ These allow you to plug in **your own services** while keeping RMC-AUTH fully ty
 1. **Fail-Safe by Default**: With `globalLock`, we prevent accidental exposure of sensitive endpoints due to developer oversight. You must explicitly open routes with `@Public()`.
 2. **Generic Error Messages**: Login failures always return a generic `Unauthorized` error to prevent **User Enumeration Attacks**.
 3. **Token Rotation**: When a Refresh Token is used, a new pair (Access + Refresh) is issued. If a stolen token is reused, the library detects the anomaly (via `isRefreshTokenValid`) and revokes the entire session history (`revokeAllTokens`).
-4. **Strong Passwords by Design**: You can start with simple rules (`strongPasswordValidation`) and evolve to **OWASP policy + Argon2** without quebrar sua API.
+4. **Strong Passwords by Design**: You can start with simple rules (`strongPasswordValidation`) and evolve to **OWASP policy + Argon2** without breaking your API.
+
+---
+
+## 🛡️ Cybersecurity Features
+
+RMC-AUTH embeds industry-standard security controls so your app stays secure by default:
+
+| Feature | Description |
+|--------|-------------|
+| **Input validation** | Identifier and password are length-capped (default 256 / 1024 chars) to prevent DoS. Invalid or oversized input returns `BadRequestException` with a generic message. |
+| **Strict mode** | Set `strictMode: true` to enforce: JWT secret ≥ 32 chars, `jwtIssuer` and `jwtAudience` required, access token TTL ≤ 1 hour. |
+| **Account lockout** | Optional: implement `getLockoutUntil`, `recordFailedLogin`, and `clearFailedLogin` on your user service and set `lockoutMaxAttempts` and `lockoutDurationMinutes`. Failed logins are recorded; successful login clears the counter. |
+| **Login rate limiting** | Optional: provide `rateLimitStore` (e.g. `InMemoryLoginRateLimitStore`) and set `rateLimitMaxAttempts` / `rateLimitWindowMs`. Returns `429 Too Many Requests` when exceeded. |
+| **Security audit hooks** | Optional callbacks: `onLoginSuccess`, `onLoginFailure`, `onRefreshSuccess`, `onRefreshFailure` for logging and SIEM. Do not throw inside them. |
+| **Refresh token validation** | Refresh token string is checked for type, non-empty, and max length before verification to avoid abuse. |
+| **Timing-safe comparison** | Export `timingSafeEqual(a, b)` for use in your `isRefreshTokenValid` to prevent timing attacks when comparing tokens. |
+| **Password breach check** | Optional: set `checkPasswordBreach: async (password) => boolean` in `EncryptionModule` (e.g. HIBP k-anonymity). Rejects compromised passwords before hashing. |
+
+**Example (strict mode + rate limit + hooks):**
+
+```typescript
+AuthModule.registerAsync({
+  inject: [UsersService, EncryptionService],
+  useFactory: (users: UsersService, encrypt: EncryptionService) => ({
+    jwtSecret: process.env.JWT_SECRET,
+    expiresIn: '15m',
+    jwtIssuer: 'my-api',
+    jwtAudience: 'my-api-clients',
+    identifierField: 'email',
+    passwordField: 'password',
+    userService: users,
+    encryptionService: encrypt,
+    globalLock: true,
+    useRefreshTokens: true,
+    refreshSecret: process.env.JWT_REFRESH_SECRET,
+    refreshExpiresIn: '7d',
+
+    strictMode: true,
+    rateLimitStore: new InMemoryLoginRateLimitStore(),
+    rateLimitMaxAttempts: 5,
+    rateLimitWindowMs: 15 * 60 * 1000,
+    onLoginFailure: (identifier, reason) => logger.warn({ identifier, reason }, 'Login failure'),
+    onLoginSuccess: (userId, identifier) => logger.info({ userId, identifier }, 'Login success'),
+  }),
+});
+```
 
 ---
 
