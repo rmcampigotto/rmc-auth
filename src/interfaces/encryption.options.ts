@@ -12,14 +12,21 @@ export interface EncryptionOptions {
    */
   pepper?: string;
 
-  /** * Se true, a lib lança erro se a senha for "fraca" 
-   * (ex: menos de 8 caracteres ou apenas números) 
+  /**
+   * Se true, a lib lança erro se a senha for "fraca"
+   * (ex: menos de 8 caracteres ou apenas números)
    */
   strongPasswordValidation?: boolean;
 
-  /** * Opção para usar algoritmos alternativos no futuro (como Argon2), 
-   * embora agora o suporte seja apenas para o Bcrypt.
+  /**
+   * Algoritmo de hashing a ser utilizado.
+   * @default 'bcrypt'
    */
-  algorithm?: 'bcrypt';
+  algorithm?: "bcrypt" | "argon2";
 
+  /**
+   * Se true, utiliza validação de senha baseada em OWASP (owasp-password-strength-test)
+   * em vez da validação simples de tamanho/numérica.
+   */
+  useOwaspPolicy?: boolean;
 };

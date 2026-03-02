@@ -4,34 +4,43 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![NestJS](https://img.shields.io/badge/built%20with-NestJS-red.svg)](https://nestjs.com/)
 
-An **out-of-the-box, enterprise-grade** authentication and authorization library for NestJS. Designed to eliminate boilerplate while maintaining maximum security standards.
+An **out-of-the-box, enterprise-grade** authentication and authorization library for NestJS.  
+Designed to eliminate boilerplate while maintaining **maximum security standards**.
 
-Features **Bcrypt with Pepper**, **Automated JWT Management**, **Refresh Token Rotation**, **Global Security Locks**, and **Native RBAC**.
+This library focuses on:
+
+- **Password safety**: Bcrypt with pepper or Argon2, plus optional OWASP password-strength policy.
+- **Token safety**: Short-lived JWTs, issuer/audience validation, and refresh token rotation.
+- **Access control**: First-class RBAC (roles), global route locking and explicit public endpoints.
 
 ## ✨ Key Features
 
-* 🔐 **Automated JWT Management**: Simplified login, token signing, and automated verification.
-* 🔄 **Refresh Token Rotation**: Advanced session security that detects and mitigates token theft by invalidating compromised sessions.
-* 🛡️ **Global Security Lock**: Toggle `globalLock: true` to protect every route by default, forcing an explicit `@Public()` opt-out.
-* 🔑 **Enhanced Bcrypt**: Hashing with optional **Pepper** support and built-in **Strong Password Validation**.
-* 🎭 **Native RBAC**: Role-Based Access Control integrated directly into the JWT payload and guarded by a high-performance `RolesGuard`.
-* 🔌 **Provider Agnostic**: Works with any database (Prisma, TypeORM, Mongoose) via simple interface injection.
+- 🔐 **Automated JWT Management**: Simplified login, token signing, and automated verification.
+- 🔄 **Refresh Token Rotation**: Advanced session security that detects and mitigates token theft by invalidating compromised sessions.
+- 🛡️ **Global Security Lock**: Toggle `globalLock: true` to protect every route by default, forcing an explicit `@Public()` opt-out.
+- 🔑 **Configurable Hashing**: **Bcrypt (default)** or **Argon2**, with optional **Pepper** and **OWASP Password Policy**.
+- 🎭 **Native RBAC**: Role-Based Access Control integrated directly into the JWT payload and guarded by a high-performance `RolesGuard`.
+- 🔌 **Provider Agnostic**: Works with any database (Prisma, TypeORM, Mongoose, raw SQL) via simple interface injection.
 
 ---
 
 ## 📦 Installation
 
 ```bash
-npm install rmc-auth @nestjs/jwt @nestjs/passport passport-jwt bcrypt
+npm install rmc-auth @nestjs/jwt @nestjs/passport passport-jwt bcrypt argon2 owasp-password-strength-test
 npm install --save-dev @types/passport-jwt @types/bcrypt
 ```
 
+> **Node**: Node 18+ (Argon2 & toolchain).
+
 ---
 
-## 🛠️ Configuration
+## 🛠️ Configuration (Step by Step)
 
-### 1. Database Integration
-Your existing User Service must implement the `IAuthUserService` interface. This allows the library to communicate with your database regardless of the ORM you use.
+### 1. Implement `IAuthUserService` (database integration)
+
+Your existing User Service must implement the `IAuthUserService` interface.  
+This allows the library to communicate with your database regardless of the ORM you use.
 
 ```typescript
 import { Injectable } from '@nestjs/common';
@@ -63,7 +72,102 @@ export class UsersService implements IAuthUserService {
 }
 ```
 
-### 2. Module Registration
+### 2. Register Modules (Encryption + Auth)
+
+RMC-AUTH is split into two modules:
+
+- `EncryptionModule`: hashing de senha (bcrypt ou argon2, pepper, política de senha).
+- `AuthModule`: JWT, refresh tokens, guards, roles e integração com seu `UserService`.
+
+#### 2.1. Basic setup (Bcrypt + strong validation)
+
+```typescript
+import { Module } from '@nestjs/common';
+import { AuthModule, EncryptionModule, EncryptionService } from 'rmc-auth';
+import { UsersService } from './users/users.service';
+
+@Module({
+  imports: [
+    // 1. Configure Encryption (Hashing)
+    EncryptionModule.register({
+      saltRounds: 12,
+      pepper: process.env.AUTH_PEPPER,
+      strongPasswordValidation: true,
+    }),
+
+    // 2. Configure Auth (JWT + Logic)
+    AuthModule.registerAsync({
+      inject: [UsersService, EncryptionService],
+      useFactory: (users: UsersService, encrypt: EncryptionService) => ({
+        // JWT Config
+        jwtSecret: process.env.JWT_SECRET,
+        expiresIn: '15m', // Short-lived access token
+        jwtIssuer: 'my-api',
+        jwtAudience: 'my-api-clients',
+
+        // Database Mapping
+        identifierField: 'email',
+        passwordField: 'password',
+        rolesField: 'roles', // Field in your DB containing user roles
+
+        // Dependency Injection
+        userService: users,
+        encryptionService: encrypt,
+
+        // Advanced Security Features
+        globalLock: true, // 🛡️ Protects ALL routes by default
+        useRefreshTokens: true,
+        refreshSecret: process.env.JWT_REFRESH_SECRET,
+        refreshExpiresIn: '7d',
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+#### 2.2. Maximum hardening (Argon2 + OWASP)
+
+```typescript
+EncryptionModule.register({
+  algorithm: 'argon2',
+  pepper: process.env.AUTH_PEPPER,
+  // Ignora validação simples e usa política OWASP
+  useOwaspPolicy: true,
+});
+
+AuthModule.registerAsync({
+  inject: [UsersService, EncryptionService],
+  useFactory: (users: UsersService, encrypt: EncryptionService) => ({
+    jwtSecret: process.env.JWT_SECRET,
+    expiresIn: '10m',
+    jwtIssuer: 'my-secure-api',
+    jwtAudience: 'my-secure-clients',
+
+    identifierField: 'email',
+    passwordField: 'passwordHash',
+    rolesField: 'roles',
+
+    userService: users,
+    encryptionService: encrypt,
+
+    globalLock: true,
+    useRefreshTokens: true,
+    refreshSecret: process.env.JWT_REFRESH_SECRET,
+    refreshExpiresIn: '3d',
+    refreshIssuer: 'my-secure-api-rt',
+    refreshAudience: 'my-secure-clients',
+  }),
+});
+```
+
+---
+
+## 📖 Usage Guide
+
+### 3. Authentication Controller
+
+Since the library handles the heavy lifting, your controller remains clean.
 Initialize the modules in your `AppModule`. We recommend using `registerAsync` to inject configuration.
 
 ```typescript
@@ -113,12 +217,9 @@ export class AppModule {}
 
 ## 📖 Usage Guide
 
-### Authentication Controller
-Since the library handles the heavy lifting, your controller remains clean.
-
 ```typescript
 import { Controller, Post, Body } from '@nestjs/common';
-import { AuthService, Public } from 'your-lib-name';
+import { AuthService, Public } from 'rmc-auth';
 
 @Controller('auth')
 export class AuthController {
@@ -138,12 +239,13 @@ export class AuthController {
 }
 ```
 
-### Authorization (RBAC)
+### 4. Authorization (RBAC)
+
 Use `@Authorize()` to restrict access based on user roles.
 
 ```typescript
 import { Controller, Get } from '@nestjs/common';
-import { Authorize } from 'your-lib-name';
+import { Authorize } from 'rmc-auth';
 
 @Controller('dashboard')
 export class DashboardController {
@@ -168,35 +270,49 @@ export class DashboardController {
 
 ### `AuthOptions` Configuration
 
-| Property | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `jwtSecret` | `string` | ✅ | Secret key to sign Access Tokens. |
-| `expiresIn` | ` number` | ✅ | Access Token TTL (e.g., `3600`). |
-| `identifierField` | `string` | ✅ | Database field for login (e.g., `'email'`). |
-| `passwordField` | `string` | ✅ | Database field for the password hash. |
-| `userService` | `IAuthUserService` | ✅ | Instance of your user service. |
-| `encryptionService` | `IEncryptionService` | ✅ | Instance of the encryption service. |
-| `globalLock` | `boolean` | ❌ | If `true`, all routes require a JWT by default. |
-| `useRefreshTokens` | `boolean` | ❌ | Enables Refresh Token generation and rotation. |
-| `refreshSecret` | `string` | ❌ | Separate secret for Refresh Tokens (Recommended). |
-| `refreshExpiresIn` | `number` | ❌ | Refresh Token TTL (e.g., `3600`). |
-| `rolesField` | `string` | ❌ | Field in your User entity containing role strings. Default: `'roles'`. |
+| Property            | Type                          | Required | Description                                                                 |
+| :------------------ | :---------------------------- | :------- | :-------------------------------------------------------------------------- |
+| `jwtSecret`         | `string`                      | ✅       | Secret key to sign Access Tokens.                                           |
+| `expiresIn`         | `string \| number`            | ✅       | Access Token TTL (e.g., `3600`, `'15m'`).                                   |
+| `identifierField`   | `string`                      | ✅       | Database field for login (e.g., `'email'`).                                 |
+| `passwordField`     | `string`                      | ✅       | Database field for the password hash.                                       |
+| `rolesField`        | `string`                      | ❌       | Field in your User entity containing role strings. Default: `'roles'`.      |
+| `userService`       | `IAuthUserService`            | ✅       | Instance of your user service.                                              |
+| `encryptionService` | `IEncryptionService`          | ✅       | Instance of the encryption service.                                         |
+| `globalLock`        | `boolean`                     | ❌       | If `true`, all routes require a JWT by default.                             |
+| `useRefreshTokens`  | `boolean`                     | ❌       | Enables Refresh Token generation and rotation.                              |
+| `refreshSecret`     | `string`                      | ❌       | Separate secret for Refresh Tokens (recommended).                           |
+| `refreshExpiresIn`  | `string \| number`            | ❌       | Refresh Token TTL (e.g., `3600`, `'7d'`).                                   |
+| `jwtIssuer`         | `string`                      | ❌       | JWT `iss` claim for access tokens.                                          |
+| `jwtAudience`       | `string`                      | ❌       | JWT `aud` claim for access tokens.                                          |
+| `refreshIssuer`     | `string`                      | ❌       | `iss` claim for refresh tokens (fallback: `jwtIssuer`).                     |
+| `refreshAudience`   | `string`                      | ❌       | `aud` claim for refresh tokens (fallback: `jwtAudience`).                   |
 
 ### `EncryptionOptions` Configuration
 
-| Property | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `saltRounds` | `number` | `10` | Bcrypt salt cost factor. |
-| `pepper` | `string` | `undefined` | Additional secret string. |
-| `strongPasswordValidation` | `boolean` | `false` | Enforces minimum length (8) and complexity. |
+| Property               | Type                            | Default     | Description                                                                 |
+| :--------------------- | :------------------------------ | :---------- | :-------------------------------------------------------------------------- |
+| `saltRounds`           | `number`                        | `10`        | Bcrypt salt cost factor (only for `algorithm: 'bcrypt'`).                   |
+| `pepper`               | `string`                        | `undefined` | Additional secret string appended to the password before hashing.           |
+| `strongPasswordValidation` | `boolean`                   | `false`     | Enforces minimum length (8) and disallows passwords with only numbers.      |
+| `algorithm`            | `'bcrypt' \| 'argon2'`          | `'bcrypt'`  | Hashing algorithm used for `hash` / `compare`.                              |
+| `useOwaspPolicy`       | `boolean`                       | `false`     | If `true`, enforces OWASP password-strength rules instead of simple checks. |
+
+### Interfaces
+
+- `IAuthUserService` (`src/interfaces/user-service.interface.ts`)
+- `IEncryptionService` (`src/interfaces/encryption-service.interface.ts`)
+
+These allow you to plug in **your own services** while keeping RMC-AUTH fully type-safe and testable.
 
 ---
 
 ## 🔒 Security Principles
 
-1.  **Fail-Safe by Default**: With `globalLock`, we prevent accidental exposure of sensitive endpoints due to developer oversight. You must explicitly open routes with `@Public()`.
-2.  **Generic Error Messages**: Login failures always return a generic `Unauthorized` error to prevent **User Enumeration Attacks**.
-3.  **Token Rotation**: When a Refresh Token is used, a new pair (Access + Refresh) is issued. If a stolen token is reused, the library detects the anomaly (via `isRefreshTokenValid`) and revokes the entire session history (`revokeAllTokens`).
+1. **Fail-Safe by Default**: With `globalLock`, we prevent accidental exposure of sensitive endpoints due to developer oversight. You must explicitly open routes with `@Public()`.
+2. **Generic Error Messages**: Login failures always return a generic `Unauthorized` error to prevent **User Enumeration Attacks**.
+3. **Token Rotation**: When a Refresh Token is used, a new pair (Access + Refresh) is issued. If a stolen token is reused, the library detects the anomaly (via `isRefreshTokenValid`) and revokes the entire session history (`revokeAllTokens`).
+4. **Strong Passwords by Design**: You can start with simple rules (`strongPasswordValidation`) and evolve to **OWASP policy + Argon2** without quebrar sua API.
 
 ---
 

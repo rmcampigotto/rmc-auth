@@ -15,7 +15,11 @@ import { PassportModule } from "@nestjs/passport";
       inject: [MODULE_OPTIONS_TOKEN],
       useFactory: (options: AuthOptions) => ({
         secret: options.jwtSecret,
-        signOptions: { expiresIn: options.expiresIn },
+        signOptions: {
+          expiresIn: options.expiresIn as any,
+          issuer: options.jwtIssuer,
+          audience: options.jwtAudience,
+        },
       }),
     }),
   ],
@@ -27,7 +31,6 @@ import { PassportModule } from "@nestjs/passport";
       inject: [MODULE_OPTIONS_TOKEN],
       useFactory: (options: AuthOptions) => options.encryptionService,
     },
-    // Registrar o Guard Global apenas se o usuário pedir
     {
       provide: APP_GUARD,
       inject: [MODULE_OPTIONS_TOKEN, Reflector],

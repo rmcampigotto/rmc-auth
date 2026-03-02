@@ -7,9 +7,9 @@ export interface AuthOptions {
    */
   jwtSecret: string;
   /** * Tempo de vida do Access Token. 
-   * Pode ser um número (segundos).
+   * Pode ser um número (segundos) ou uma string (ex: '15m', '1h').
    */
-  expiresIn: number;
+  expiresIn: string | number;
   /** Nome do campo de login (ex: 'email', 'usename', etc). */
   identifierField: string;
   /** Nome do campo de senha (ex: 'password', 'senha', etc). */
@@ -24,8 +24,31 @@ export interface AuthOptions {
   useRefreshTokens?: boolean;
   /** Segredo diferente para o Refresh Token (mais segurança) */
   refreshSecret?: string;
-  /** Tempo de expiração do Refresh Token. Exemplo: 3000. Valor em segundos. */
-  refreshExpiresIn?: number;
+  /** Tempo de expiração do Refresh Token. Exemplo: 3000. Valor em segundos ou string (ex: '7d'). */
+  refreshExpiresIn?: string | number;
   /** Se true, o JwtAuthGuard será aplicado automaticamente em todas as rotas da aplicação */
   globalLock?: boolean;
+  /**
+   * Emissor (issuer) padrão para o Access Token.
+   * Recomenda-se sempre definir.
+   */
+  jwtIssuer?: string;
+
+  /**
+   * Audiência (audience) padrão para o Access Token.
+   * Recomenda-se sempre definir.
+   */
+  jwtAudience?: string;
+
+  /**
+   * Emissor específico para o Refresh Token.
+   * Se não informado, será usado jwtIssuer.
+   */
+  refreshIssuer?: string;
+
+  /**
+   * Audiência específica para o Refresh Token.
+   * Se não informado, será usado jwtAudience.
+   */
+  refreshAudience?: string;
 }

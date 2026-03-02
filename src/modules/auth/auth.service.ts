@@ -12,12 +12,14 @@ export class AuthService {
     @Inject('ENCRYPTION_SERVICE') private readonly encryptionService: IEncryptionService
   ) {};
 
-  async generateTokens(user: any) {
+  async generateTokens(user: Record<string, any>) {
     const rolesField = this.authOptions.rolesField || 'roles';
     const payload = { sub: user.id, username: user[this.authOptions.identifierField], roles: user[rolesField] };
     const accessToken = await this.jwtService.signAsync(payload, {
       secret: this.authOptions.jwtSecret,
-      expiresIn: this.authOptions.expiresIn
+      expiresIn: this.authOptions.expiresIn as any,
+      issuer: this.authOptions.jwtIssuer,
+      audience: this.authOptions.jwtAudience,
     });
 
     let refreshToken = null;
@@ -25,7 +27,9 @@ export class AuthService {
     if (this.authOptions.useRefreshTokens) {
       refreshToken = await this.jwtService.signAsync(payload, {
         secret: this.authOptions.refreshSecret || this.authOptions.jwtSecret,
-        expiresIn: this.authOptions.refreshExpiresIn || '7d',
+        expiresIn: (this.authOptions.refreshExpiresIn || '7d') as any,
+        issuer: this.authOptions.refreshIssuer || this.authOptions.jwtIssuer,
+        audience: this.authOptions.refreshAudience || this.authOptions.jwtAudience,
       });
       if (!this.authOptions.userService.saveRefreshToken) {
         throw new Error('userService must implement saveRefreshToken to use Refresh Tokens');
@@ -40,6 +44,8 @@ export class AuthService {
     try {
       const payload = await this.jwtService.verifyAsync(rt, {
         secret: this.authOptions.refreshSecret || this.authOptions.jwtSecret,
+        issuer: this.authOptions.refreshIssuer || this.authOptions.jwtIssuer,
+        audience: this.authOptions.refreshAudience || this.authOptions.jwtAudience,
       });
       const user = await this.authOptions.userService.findOneByField('id', payload.sub);
 
