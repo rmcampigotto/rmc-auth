@@ -22,4 +22,4 @@ Then:
 
 ## Note
 
-The library is linked via `"rmc-auth": "file:../.."`. To use a published version, replace that in `package.json` with `"rmc-auth": "^1.0.0"` (or the current version).
+The library is linked via `"rmc-auth": "file:../.."`. To use a published version, replace that in `package.json` with `"rmc-auth": "^2.0.0"` (or the current version).
