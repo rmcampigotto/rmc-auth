@@ -15,6 +15,7 @@ export type {
   RefreshFailureReason,
   LockoutPolicy,
   PasswordValidationResult,
+  PasswordResetToken,
 } from "./types/auth.types";
 
 // 2. Main modules
@@ -28,12 +29,14 @@ export * from './modules/auth/auth.service';
 // 4. Guards (for manual use via @UseGuards)
 export * from './guards/jwt-auth.guard';
 export * from './guards/roles.guard';
+export * from './guards/permissions.guard';
 
 // 5. Decorators (ease of use)
 export * from './decorators/public.decorator';
 export * from './decorators/roles.decorator';
 export * from './decorators/auth.decorator';
 export * from './decorators/current-user.decorator';
+export * from './decorators/permissions.decorator';
 
 // 6. Constants (for referencing injection tokens)
 export { MODULE_OPTIONS_TOKEN as AUTH_OPTIONS_TOKEN } from './modules/auth/auth.module-definition';
@@ -45,6 +48,10 @@ export { timingSafeEqual } from './security/timing-safe.util';
 export { generateSecureToken, hashToken } from './security/token.util';
 export { InMemoryLoginRateLimitStore } from './security/login-rate-limit.store';
 export type { InMemoryLoginRateLimitStoreOptions } from './security/login-rate-limit.store';
+export { InMemoryTokenBlacklistStore } from './security/token-blacklist.store';
+export type { ITokenBlacklistStore } from './security/token-blacklist.store';
 
 // 8. Utilities
 export { parseDurationToSeconds } from './utils/duration.util';
+export { expandRoles, permissionMatches, hasPermission } from './utils/authorization.util';
+export { getRequestFromContext } from './utils/request.util';

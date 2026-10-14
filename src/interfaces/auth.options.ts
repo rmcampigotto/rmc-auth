@@ -1,5 +1,6 @@
 import { IEncryptionService } from "./encryption-service.interface";
 import { IAuthUserService } from "./user-service.interface";
+import type { ITokenBlacklistStore } from "../security/token-blacklist.store";
 import type {
   AuthContext,
   JwtPayload,
@@ -28,6 +29,16 @@ export interface AuthOptions {
   passwordField: string;
   /** Name of the field that contains roles in the user object (e.g. 'roles', 'permissions'). */
   rolesField?: string;
+  /**
+   * Name of the field that contains fine-grained permissions (e.g. 'permissions').
+   * When set, permissions are added to the JWT and checked by `@RequirePermissions()`.
+   */
+  permissionsField?: string;
+  /**
+   * Role inheritance. A user with a role also has every role it inherits (transitively).
+   * @example { admin: ['manager'], manager: ['user'] }
+   */
+  roleHierarchy?: Record<string, string[]>;
   /**
    * Name of the field that contains the user id.
    * @default 'id'
@@ -89,6 +100,25 @@ export interface AuthOptions {
    * @default 0
    */
   clockToleranceSeconds?: number;
+
+  /**
+   * Store of revoked access tokens. Enables `revokeAccessToken()` and immediate logout of access tokens.
+   * Use `InMemoryTokenBlacklistStore` for single-instance apps or implement it with Redis.
+   */
+  tokenBlacklist?: ITokenBlacklistStore;
+
+  // --- Action tokens (password reset, e-mail verification, ...) ---
+
+  /**
+   * Secret for action tokens (password reset, e-mail verification, magic links).
+   * Falls back to `jwtSecret`; the `type` claim keeps them from being used as access tokens.
+   */
+  actionTokenSecret?: string;
+  /**
+   * Password reset token lifetime.
+   * @default '15m'
+   */
+  passwordResetExpiresIn?: string | number;
 
   // --- Token extraction & payload ---
 
@@ -164,6 +194,8 @@ export interface AuthOptions {
   onRefreshFailure?: (reason: RefreshFailureReason, context?: AuthContext) => void | Promise<void>;
   /** Security audit: called after logout. Do not throw. */
   onLogout?: (userId: string, context?: AuthContext) => void | Promise<void>;
+  /** Security audit: called after a password change or reset. Do not throw. */
+  onPasswordChanged?: (userId: string, method: "change" | "reset", context?: AuthContext) => void | Promise<void>;
 
   /** Rate limit: max login attempts per key (identifier, or IP + identifier when context.ip is given) per window. */
   rateLimitMaxAttempts?: number;

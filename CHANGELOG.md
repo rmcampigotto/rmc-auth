@@ -20,7 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `isGlobal` option for both modules (AuthModule global by default).
 - Utilities: `generateSecureToken()`, `hashToken()`, `parseDurationToSeconds()`.
 - `InMemoryLoginRateLimitStore` is bounded (`maxEntries`) and exposes `prune()`, `clear()` and `size`.
-- Tests for all new features, plus a full-module integration test.
+- Permissions: `permissionsField`, `@Permissions()`, `@RequirePermissions()`, `@RequireAnyPermission()`, `PermissionsMatch`, `PermissionsGuard` (global with `globalLock`), wildcard matching (`posts:*`, `*:read`).
+- Role hierarchy (`roleHierarchy`), applied by `RolesGuard`.
+- `@OptionalAuth()` for routes that work with or without a token.
+- Access token revocation: `tokenBlacklist` (`ITokenBlacklistStore`, `InMemoryTokenBlacklistStore`), `revokeAccessToken()`, `logout(userId, context, accessToken)` and `@AccessToken()`. Access tokens now include a `jti`.
+- Passwords: `changePassword()`, stateless single-use `createPasswordResetToken()` / `resetPassword()`, `onPasswordChanged` hook, `passwordResetExpiresIn`.
+- Action tokens: `createActionToken()` / `verifyActionToken()` (e-mail verification, magic links, invites), `actionTokenSecret`.
+- GraphQL and WebSocket support in guards, `@CurrentUser()` and `@AccessToken()` (`getRequestFromContext()`).
+- Utilities: `expandRoles()`, `permissionMatches()`, `hasPermission()`.
+- Tests for all new features, plus full-module integration tests.
 
 ### Changed
 
@@ -37,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `compare()` threw on malformed hashes instead of returning `false`.
 - Token verification did not pin the signing algorithm.
 - `InMemoryLoginRateLimitStore` could grow without bound.
+- Signing tokens failed with `"issuer" must be a string` when `jwtIssuer` / `jwtAudience` were not configured.
 
 ## [1.0.0] - 2025-03-02
 

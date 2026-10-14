@@ -29,6 +29,7 @@ export interface IAuthUserService {
   /**
    * Optional: persist a new password hash. Called after a successful login when the stored hash
    * uses outdated parameters (e.g. bcrypt -> argon2 migration, higher cost). Enables transparent rehashing.
+   * Required by `changePassword()` and `resetPassword()`.
    */
   updatePasswordHash?(userId: string, newHash: string): Promise<void>;
 }

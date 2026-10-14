@@ -42,6 +42,29 @@ export class AuthOptionsValidator implements OnModuleInit {
     if (o.refreshExpiresIn != null) {
       parseDurationOption("refreshExpiresIn", o.refreshExpiresIn);
     }
+    if (o.passwordResetExpiresIn != null) {
+      parseDurationOption("passwordResetExpiresIn", o.passwordResetExpiresIn);
+    }
+    if (o.actionTokenSecret != null && (typeof o.actionTokenSecret !== "string" || !o.actionTokenSecret)) {
+      throw new Error("AuthModule: 'actionTokenSecret' must be a non-empty string.");
+    }
+    if (o.strictMode && o.actionTokenSecret && o.actionTokenSecret.length < SECURITY_CONSTANTS.MIN_JWT_SECRET_LENGTH) {
+      throw new Error(
+        `AuthModule (strictMode): 'actionTokenSecret' must be at least ${SECURITY_CONSTANTS.MIN_JWT_SECRET_LENGTH} characters.`
+      );
+    }
+    if (o.roleHierarchy != null) {
+      const valid =
+        typeof o.roleHierarchy === "object" &&
+        Object.values(o.roleHierarchy).every((v) => Array.isArray(v) && v.every((r) => typeof r === "string"));
+      if (!valid) throw new Error("AuthModule: 'roleHierarchy' must map role names to arrays of role names.");
+    }
+    if (
+      o.tokenBlacklist != null &&
+      (typeof o.tokenBlacklist.add !== "function" || typeof o.tokenBlacklist.has !== "function")
+    ) {
+      throw new Error("AuthModule: 'tokenBlacklist' must implement add() and has().");
+    }
     if (o.jwtAlgorithm && !ALGORITHMS.includes(o.jwtAlgorithm)) {
       throw new Error(`AuthModule: 'jwtAlgorithm' must be one of ${ALGORITHMS.join(", ")}.`);
     }

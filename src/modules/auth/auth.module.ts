@@ -7,6 +7,7 @@ import { AuthOptionsValidator } from "./auth-options.validator";
 import { APP_GUARD } from "@nestjs/core";
 import { GlobalJwtAuthGuard, JwtAuthGuard } from "../../guards/jwt-auth.guard";
 import { GlobalRolesGuard, RolesGuard } from "../../guards/roles.guard";
+import { GlobalPermissionsGuard, PermissionsGuard } from "../../guards/permissions.guard";
 import { JwtStrategy } from "../../strategies/jwt.strategy";
 import { PassportModule } from "@nestjs/passport";
 
@@ -18,12 +19,15 @@ import { PassportModule } from "@nestjs/passport";
       useFactory: (options: AuthOptions) =>
         ({
           secret: options.jwtSecret,
-          signOptions: {
-            expiresIn: options.expiresIn,
-            issuer: options.jwtIssuer,
-            audience: options.jwtAudience,
-            algorithm: options.jwtAlgorithm ?? "HS256",
-          },
+          // Undefined keys are dropped: jsonwebtoken rejects e.g. `issuer: undefined`.
+          signOptions: Object.fromEntries(
+            Object.entries({
+              expiresIn: options.expiresIn,
+              issuer: options.jwtIssuer,
+              audience: options.jwtAudience,
+              algorithm: options.jwtAlgorithm ?? "HS256",
+            }).filter(([, v]) => v !== undefined)
+          ),
           verifyOptions: {
             algorithms: [options.jwtAlgorithm ?? "HS256"],
           },
@@ -36,15 +40,17 @@ import { PassportModule } from "@nestjs/passport";
     JwtStrategy,
     JwtAuthGuard,
     RolesGuard,
+    PermissionsGuard,
     {
       provide: 'ENCRYPTION_SERVICE',
       inject: [MODULE_OPTIONS_TOKEN],
       useFactory: (options: AuthOptions) => options.encryptionService,
     },
-    // Both guards are no-ops unless `globalLock` is true. Order matters: authentication before roles.
+    // Global guards are no-ops unless `globalLock` is true. Order matters: authentication before authorization.
     { provide: APP_GUARD, useClass: GlobalJwtAuthGuard },
     { provide: APP_GUARD, useClass: GlobalRolesGuard },
+    { provide: APP_GUARD, useClass: GlobalPermissionsGuard },
   ],
-  exports: [AuthService, JwtAuthGuard, RolesGuard, MODULE_OPTIONS_TOKEN],
+  exports: [AuthService, JwtAuthGuard, RolesGuard, PermissionsGuard, MODULE_OPTIONS_TOKEN],
 })
 export class AuthModule extends ConfigurableModuleClass {};

@@ -26,6 +26,11 @@ This library focuses on:
 - 🚪 **Logout & Token Utilities**: `logout()`, `verifyAccessToken()`, `validateUser()` for WebSockets, GraphQL or custom flows.
 - 🧬 **Custom Claims**: Add tenant ids, permissions or any data to the JWT with `buildPayload`.
 - 🔁 **Transparent Rehash**: Migrate from bcrypt to Argon2 (or raise the cost) without forcing password resets.
+- 🧩 **Permissions (ABAC-lite)**: `@RequirePermissions('posts:delete')` with wildcards (`posts:*`, `*:read`) and role hierarchy.
+- 🔓 **Optional Auth**: `@OptionalAuth()` routes work for anonymous users and personalize for logged-in ones.
+- 🔑 **Password Reset & Change**: Stateless, single-use reset tokens and `changePassword()` — no extra tables needed.
+- ⛔ **Access Token Revocation**: Kill an access token immediately on logout with a pluggable blacklist.
+- 📡 **GraphQL & WebSockets**: Guards and `@CurrentUser()` work in HTTP, GraphQL and WS contexts.
 
 ---
 
@@ -256,6 +261,100 @@ export class DashboardController {
 
 With `globalLock: true`, `@Roles('admin')` alone is enough: authentication and roles are enforced globally.
 
+#### Role hierarchy
+
+```typescript
+roleHierarchy: { admin: ['manager'], manager: ['user'] }, // admin inherits manager and user
+```
+
+### 5. Permissions
+
+Set `permissionsField` (e.g. `'permissions'`) and the user's permissions are added to the JWT (`request.user.permissions`).
+
+```typescript
+import { RequirePermissions, RequireAnyPermission, Permissions } from 'rmc-auth';
+
+@Controller('posts')
+export class PostsController {
+  @Delete(':id')
+  @RequirePermissions('posts:delete') // every permission is required
+  remove() {}
+
+  @Get('reports')
+  @RequireAnyPermission('reports:read', 'reports:*') // at least one
+  reports() {}
+
+  @Patch(':id')
+  @Permissions('posts:update') // enough when globalLock is true
+  update() {}
+}
+```
+
+Wildcards: `*` grants everything, `posts:*` grants `posts:read` / `posts:comments:delete`, `*:read` grants every `read`.
+
+### 6. Optional authentication
+
+```typescript
+@OptionalAuth()
+@Get('feed')
+feed(@CurrentUser() user?: RequestUser) {
+  return user ? this.feed.personalized(user.id) : this.feed.public();
+}
+```
+
+### 7. Password reset & change
+
+Requires `updatePasswordHash(userId, hash)` in your `IAuthUserService`. Reset tokens are stateless and single-use:
+they are bound to the current password hash, so they stop working as soon as the password changes.
+
+```typescript
+@Public()
+@Post('forgot-password')
+async forgot(@Body('email') email: string) {
+  const reset = await this.authService.createPasswordResetToken(email);
+  if (reset) await this.mailer.sendReset(reset.user.email, reset.token); // expires in passwordResetExpiresIn (15m)
+  return { message: 'If the account exists, an e-mail was sent.' }; // same answer either way
+}
+
+@Public()
+@Post('reset-password')
+reset(@Body() body: { token: string; password: string }) {
+  return this.authService.resetPassword(body.token, body.password); // revokes every session
+}
+
+@Post('change-password')
+change(@CurrentUser('id') id: string, @Body() body: { current: string; next: string }) {
+  return this.authService.changePassword(id, body.current, body.next);
+}
+```
+
+#### Action tokens (e-mail verification, magic links, invites)
+
+```typescript
+const token = await authService.createActionToken(user.id, 'email_verification', '1d', { email: user.email });
+const payload = await authService.verifyActionToken(token, 'email_verification'); // { sub, email, ... }
+```
+
+Action tokens never authenticate requests and are only accepted for their own purpose.
+
+### 8. Revoking access tokens
+
+```typescript
+AuthModule.register({ ..., tokenBlacklist: new InMemoryTokenBlacklistStore() }); // or a Redis implementation
+
+@Post('logout')
+logout(@CurrentUser('id') id: string, @AccessToken() token: string) {
+  return this.authService.logout(id, undefined, token); // refresh tokens + this access token
+}
+```
+
+Implement `ITokenBlacklistStore` (`add(jti, expiresAt)`, `has(jti)`) with Redis for multi-instance deployments.
+
+### 9. GraphQL and WebSockets
+
+`JwtAuthGuard`, `RolesGuard`, `PermissionsGuard`, `@CurrentUser()` and `@AccessToken()` detect the context type automatically
+(`context.req` for GraphQL, the socket handshake for WebSockets).
+
 ---
 
 ## ⚙️ API Reference
@@ -289,6 +388,12 @@ With `globalLock: true`, `@Roles('admin')` alone is enough: authentication and r
 | `isUserActive`      | `(user) => boolean`           | ❌       | Blocks login/refresh for inactive users (same generic 401).                 |
 | `normalizeIdentifier` | `(id) => string`            | ❌       | Normalizes the identifier (e.g. trim + lowercase).                          |
 | `isGlobal`          | `boolean`                     | ❌       | Registers AuthModule globally. Default: `true`.                             |
+| `permissionsField`  | `string`                      | ❌       | Field with fine-grained permissions; adds them to the JWT.                  |
+| `roleHierarchy`     | `Record<string, string[]>`    | ❌       | Role inheritance, e.g. `{ admin: ['manager'] }`.                           |
+| `tokenBlacklist`    | `ITokenBlacklistStore`        | ❌       | Enables `revokeAccessToken()` and immediate logout.                         |
+| `actionTokenSecret` | `string`                      | ❌       | Secret for reset/verification tokens (fallback: `jwtSecret`).               |
+| `passwordResetExpiresIn` | `string \| number`       | ❌       | Reset token TTL. Default: `'15m'`.                                          |
+| `onPasswordChanged` | `(userId, method, ctx) => void` | ❌     | Audit hook for password change/reset.                                       |
 
 ### `EncryptionOptions` Configuration
 
@@ -311,7 +416,12 @@ With `globalLock: true`, `@Roles('admin')` alone is enough: authentication and r
 |--------|-------------|
 | `login(credentials, context?)` | Validates credentials and returns `AuthTokens`. |
 | `refresh(refreshToken, context?)` | Rotates tokens; reuse of an old token revokes every session. |
-| `logout(userId, context?)` | Revokes refresh tokens (`revokeAllTokens`) and fires `onLogout`. |
+| `logout(userId, context?, accessToken?)` | Revokes refresh tokens (`revokeAllTokens`), the given access token (with `tokenBlacklist`) and fires `onLogout`. |
+| `revokeAccessToken(token)` | Revokes an access token immediately (requires `tokenBlacklist`). |
+| `changePassword(userId, current, next, context?)` | Checks the current password, stores the new hash and revokes sessions. |
+| `createPasswordResetToken(identifier)` | Single-use reset token, or `null` if the user does not exist. |
+| `resetPassword(token, newPassword, context?)` | Sets the new password and revokes sessions. |
+| `createActionToken(userId, purpose, expiresIn?, data?)` / `verifyActionToken(token, purpose)` | Signed tokens for e-mail verification, magic links, invites. |
 | `validateUser(credentials, context?)` | Same checks as `login()`, returns the user without issuing tokens. |
 | `generateTokens(user)` | Issues tokens for a user record (sign-up, OAuth, magic link...). |
 | `verifyAccessToken(token)` | Verifies an access token (WebSockets, GraphQL, microservices). |
@@ -354,6 +464,12 @@ getProfile(@Request() req: { user: RequestUser }) {
 | `@AuthorizeAll(...roles)` | Same as `@Authorize`, but the user must have **every** role. |
 | `@CurrentUser(field?)` | Injects `request.user` (or one of its fields) into the handler. |
 | `RolesMatch('any' \| 'all')` | Changes how `@Roles` are matched. |
+| `@OptionalAuth()` | Populates `request.user` when a valid token is sent; anonymous requests still pass. |
+| `@RequirePermissions(...perms)` | Requires a valid JWT and every permission (wildcards supported). |
+| `@RequireAnyPermission(...perms)` | Requires a valid JWT and at least one permission. |
+| `@Permissions(...perms)` | Permission metadata (enforced globally with `globalLock`). |
+| `@AccessToken()` | Injects the raw access token of the request. |
+| `PermissionsGuard` | Guard that checks `request.user.permissions`. |
 | `Roles(...roles)` | Metadata for roles; used by `RolesGuard`. |
 | `JwtAuthGuard`    | Guard that validates the JWT and attaches the user to the request. |
 | `RolesGuard`      | Guard that checks the user has one of the required roles. |
@@ -445,6 +561,7 @@ async updatePasswordHash(userId: string, newHash: string) {
 - Tokens now carry a `type` claim. Refresh tokens issued by 1.0.0 have no `type` and are rejected by `refresh()`: users simply log in again once.
 - `AuthModule` is registered globally by default (`isGlobal: true`) so `@Authorize()` works in any feature module.
 - Duration options (`expiresIn`, `refreshExpiresIn`) are validated at bootstrap; invalid formats now fail fast.
+- Only access tokens (no `type`, or `type: 'access'`) authenticate requests; refresh and action tokens are rejected.
 
 ---
 

@@ -2,7 +2,7 @@
  * Kind of token carried in the `type` claim.
  * Prevents an access token from being used as a refresh token (and vice versa).
  */
-export type TokenType = "access" | "refresh";
+export type TokenType = "access" | "refresh" | "action";
 
 /**
  * JWT payload shape (claims) after verification.
@@ -12,9 +12,13 @@ export interface JwtPayload {
   sub: string;
   username: string;
   roles?: string[];
-  /** Token kind. Refresh tokens are rejected by the access-token strategy. */
+  /** Fine-grained permissions (when `permissionsField` is configured). */
+  permissions?: string[];
+  /** Token kind. Only access tokens authenticate requests. */
   type?: TokenType;
-  /** Unique token id (always present on refresh tokens). */
+  /** Purpose of an action token (e.g. 'password_reset', 'email_verification'). */
+  purpose?: string;
+  /** Unique token id (used for rotation and revocation). */
   jti?: string;
   iat?: number;
   exp?: number;
@@ -32,6 +36,8 @@ export interface RequestUser {
   id: string;
   username: string;
   roles?: string[];
+  /** Fine-grained permissions (when `permissionsField` is configured). */
+  permissions?: string[];
   /** Custom claims added through `AuthOptions.buildPayload`, if any. */
   claims?: Record<string, unknown>;
 }
@@ -77,6 +83,16 @@ export type RefreshFailureReason =
   | "user_not_found"
   | "user_inactive"
   | "token_compromised";
+
+/** Result of `AuthService.createPasswordResetToken()`. */
+export interface PasswordResetToken {
+  token: string;
+  userId: string;
+  /** Lifetime in seconds. */
+  expiresIn: number;
+  /** The user record, e.g. to read the e-mail address the link will be sent to. */
+  user: Record<string, unknown>;
+}
 
 /** Lockout settings passed to `IAuthUserService.recordFailedLogin`. */
 export interface LockoutPolicy {

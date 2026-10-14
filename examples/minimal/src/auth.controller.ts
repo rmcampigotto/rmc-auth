@@ -1,5 +1,5 @@
 import { Controller, Post, Body, Get, Ip, Headers, HttpCode } from '@nestjs/common';
-import { AuthService, Public, Authorize, CurrentUser } from 'rmc-auth';
+import { AuthService, Public, Authorize, CurrentUser, AccessToken } from 'rmc-auth';
 import type { RequestUser } from 'rmc-auth';
 
 @Controller('auth')
@@ -24,8 +24,33 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(204)
-  async logout(@CurrentUser('id') userId: string) {
-    await this.authService.logout(userId);
+  async logout(@CurrentUser('id') userId: string, @AccessToken() token: string) {
+    await this.authService.logout(userId, undefined, token);
+  }
+
+  @Post('change-password')
+  @HttpCode(204)
+  async changePassword(
+    @CurrentUser('id') userId: string,
+    @Body() body: { currentPassword: string; newPassword: string },
+  ) {
+    await this.authService.changePassword(userId, body.currentPassword, body.newPassword);
+  }
+
+  @Public()
+  @Post('forgot-password')
+  async forgotPassword(@Body('email') email: string) {
+    const reset = await this.authService.createPasswordResetToken(email);
+    // In a real app, e-mail the token instead of logging it.
+    if (reset) console.log(`Password reset token for ${email}: ${reset.token}`);
+    return { message: 'If the account exists, an e-mail was sent.' };
+  }
+
+  @Public()
+  @Post('reset-password')
+  @HttpCode(204)
+  async resetPassword(@Body() body: { token: string; password: string }) {
+    await this.authService.resetPassword(body.token, body.password);
   }
 }
 

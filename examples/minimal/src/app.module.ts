@@ -4,6 +4,7 @@ import {
   EncryptionModule,
   EncryptionService,
   InMemoryLoginRateLimitStore,
+  InMemoryTokenBlacklistStore,
 } from 'rmc-auth';
 import { UsersService } from './users.service';
 import { AuthController, ProfileController } from './auth.controller';
@@ -34,6 +35,7 @@ import { AuthController, ProfileController } from './auth.controller';
         normalizeIdentifier: (email) => email.trim().toLowerCase(),
         rateLimitStore: new InMemoryLoginRateLimitStore(),
         rateLimitMaxAttempts: 5,
+        tokenBlacklist: new InMemoryTokenBlacklistStore(),
       }),
     }),
   ],

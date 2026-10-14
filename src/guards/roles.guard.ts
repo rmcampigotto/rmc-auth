@@ -4,10 +4,15 @@ import { ROLES_KEY, ROLES_MATCH_KEY, RolesMatchMode } from "../decorators/roles.
 import { IS_PUBLIC_KEY } from "../decorators/public.decorator";
 import { MODULE_OPTIONS_TOKEN } from "../modules/auth/auth.module-definition";
 import type { AuthOptions } from "../interfaces/auth.options";
+import { getRequestFromContext } from "../utils/request.util";
+import { expandRoles } from "../utils/authorization.util";
 
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  constructor(
+    protected reflector: Reflector,
+    @Optional() @Inject(MODULE_OPTIONS_TOKEN) protected options?: AuthOptions
+  ) {}
 
   canActivate(context: ExecutionContext) {
     const targets = [context.getHandler(), context.getClass()];
@@ -19,8 +24,8 @@ export class RolesGuard implements CanActivate {
       return true;
     };
 
-    const request = context.switchToHttp().getRequest();
-    const user = request.user;
+    const request = getRequestFromContext(context);
+    const user = request?.user;
 
     if (!user) {
       throw new ForbiddenException('RolesGuard requires authentication. Ensure JwtAuthGuard is active.');
@@ -31,7 +36,7 @@ export class RolesGuard implements CanActivate {
     };
 
     const mode = this.reflector.getAllAndOverride<RolesMatchMode>(ROLES_MATCH_KEY, targets) ?? 'any';
-    const userRoles: string[] = user.roles;
+    const userRoles = expandRoles(user.roles, this.options?.roleHierarchy);
     const hasRole = mode === 'all'
       ? requiredRoles.every((role) => userRoles.includes(role))
       : requiredRoles.some((role) => userRoles.includes(role));
@@ -49,13 +54,6 @@ export class RolesGuard implements CanActivate {
  */
 @Injectable()
 export class GlobalRolesGuard extends RolesGuard {
-  constructor(
-    reflector: Reflector,
-    @Optional() @Inject(MODULE_OPTIONS_TOKEN) private readonly options?: AuthOptions
-  ) {
-    super(reflector);
-  }
-
   canActivate(context: ExecutionContext) {
     if (!this.options?.globalLock) return true;
     return super.canActivate(context);

@@ -51,3 +51,19 @@ describe("security utilities", () => {
     });
   });
 });
+
+describe("InMemoryTokenBlacklistStore", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { InMemoryTokenBlacklistStore } = require("./token-blacklist.store");
+
+  it("tracks revoked ids until they expire", async () => {
+    const store = new InMemoryTokenBlacklistStore();
+    await store.add("jti-1", Date.now() + 60_000);
+    await store.add("jti-2", Date.now() - 1);
+    expect(await store.has("jti-1")).toBe(true);
+    expect(await store.has("jti-2")).toBe(false);
+    expect(await store.has("unknown")).toBe(false);
+    store.prune();
+    expect(store.size).toBe(1);
+  });
+});
