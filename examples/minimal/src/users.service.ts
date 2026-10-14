@@ -54,6 +54,15 @@ export class UsersService implements IAuthUserService, OnModuleInit {
     return false;
   }
 
+  async updatePasswordHash(userId: string, newHash: string): Promise<void> {
+    for (const u of this.users.values()) {
+      if (u.id === userId) {
+        u.password = newHash;
+        return;
+      }
+    }
+  }
+
   async revokeAllTokens(userId: string): Promise<void> {
     for (const u of this.users.values()) {
       if (u.id === userId) {
@@ -62,5 +71,4 @@ export class UsersService implements IAuthUserService, OnModuleInit {
       }
     }
   }
-
 }

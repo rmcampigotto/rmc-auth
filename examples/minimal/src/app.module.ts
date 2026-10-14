@@ -3,6 +3,8 @@ import {
   AuthModule,
   EncryptionModule,
   EncryptionService,
+  InMemoryLoginRateLimitStore,
+  InMemoryTokenBlacklistStore,
 } from 'rmc-auth';
 import { UsersService } from './users.service';
 import { AuthController, ProfileController } from './auth.controller';
@@ -29,6 +31,11 @@ import { AuthController, ProfileController } from './auth.controller';
         useRefreshTokens: true,
         refreshSecret: process.env.JWT_REFRESH_SECRET || 'example-refresh-secret',
         refreshExpiresIn: '7d',
+        hashRefreshTokens: true,
+        normalizeIdentifier: (email) => email.trim().toLowerCase(),
+        rateLimitStore: new InMemoryLoginRateLimitStore(),
+        rateLimitMaxAttempts: 5,
+        tokenBlacklist: new InMemoryTokenBlacklistStore(),
       }),
     }),
   ],

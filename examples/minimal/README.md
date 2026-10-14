@@ -15,8 +15,11 @@ Then:
 
 - **Login:** `POST http://localhost:3000/auth/login` with body `{ "email": "user@example.com", "password": "Password123!" }`
 - **Refresh:** `POST http://localhost:3000/auth/refresh` with body `{ "refreshToken": "<refresh_token>" }`
+- **Logout:** `POST http://localhost:3000/auth/logout` with header `Authorization: Bearer <access_token>`
+- **Change password:** `POST /auth/change-password` `{ "currentPassword": "...", "newPassword": "..." }` (authenticated)
+- **Forgot / reset password:** `POST /auth/forgot-password` `{ "email": "..." }` (token is logged), then `POST /auth/reset-password` `{ "token": "...", "password": "..." }`
 - **Protected route:** `GET http://localhost:3000/profile` with header `Authorization: Bearer <access_token>`
 
 ## Note
 
-The library is linked via `"rmc-auth": "file:../.."`. To use a published version, replace that in `package.json` with `"rmc-auth": "^0.0.2"` (or the current version).
+The library is linked via `"rmc-auth": "file:../.."`. To use a published version, replace that in `package.json` with `"rmc-auth": "^2.0.0"` (or the current version).

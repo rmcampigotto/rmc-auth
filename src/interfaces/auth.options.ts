@@ -1,5 +1,16 @@
 import { IEncryptionService } from "./encryption-service.interface";
 import { IAuthUserService } from "./user-service.interface";
+import type { ITokenBlacklistStore } from "../security/token-blacklist.store";
+import type {
+  AuthContext,
+  JwtPayload,
+  LoginFailureReason,
+  RefreshFailureReason,
+  RequestUser,
+} from "../types/auth.types";
+
+/** HMAC algorithms supported for signing tokens. */
+export type JwtAlgorithm = "HS256" | "HS384" | "HS512";
 
 export interface AuthOptions {
   /**
@@ -18,6 +29,21 @@ export interface AuthOptions {
   passwordField: string;
   /** Name of the field that contains roles in the user object (e.g. 'roles', 'permissions'). */
   rolesField?: string;
+  /**
+   * Name of the field that contains fine-grained permissions (e.g. 'permissions').
+   * When set, permissions are added to the JWT and checked by `@RequirePermissions()`.
+   */
+  permissionsField?: string;
+  /**
+   * Role inheritance. A user with a role also has every role it inherits (transitively).
+   * @example { admin: ['manager'], manager: ['user'] }
+   */
+  roleHierarchy?: Record<string, string[]>;
+  /**
+   * Name of the field that contains the user id.
+   * @default 'id'
+   */
+  idField?: string;
   /** Instance of the service that implements user lookup in the database. */
   userService: IAuthUserService;
   /** Instance of the encryption service (EncryptionService). */
@@ -28,7 +54,16 @@ export interface AuthOptions {
   refreshSecret?: string;
   /** Refresh Token expiration. Example: 3000. Value in seconds or string (e.g. '7d'). */
   refreshExpiresIn?: string | number;
-  /** If true, JwtAuthGuard is applied automatically to all application routes. */
+  /**
+   * If true, refresh tokens are stored as SHA-256 hashes: `saveRefreshToken` and `isRefreshTokenValid`
+   * receive the hash instead of the raw token. Recommended: a database leak won't expose usable tokens.
+   * @default false
+   */
+  hashRefreshTokens?: boolean;
+  /**
+   * If true, JwtAuthGuard is applied automatically to all application routes,
+   * and RolesGuard enforces `@Roles()` globally.
+   */
   globalLock?: boolean;
   /**
    * Default issuer for the Access Token.
@@ -54,11 +89,97 @@ export interface AuthOptions {
    */
   refreshAudience?: string;
 
+  /**
+   * Signing algorithm. Verification only accepts this algorithm (prevents algorithm confusion).
+   * @default 'HS256'
+   */
+  jwtAlgorithm?: JwtAlgorithm;
+
+  /**
+   * Clock skew tolerance in seconds when verifying `exp`/`nbf`.
+   * @default 0
+   */
+  clockToleranceSeconds?: number;
+
+  /**
+   * Store of revoked access tokens. Enables `revokeAccessToken()` and immediate logout of access tokens.
+   * Use `InMemoryTokenBlacklistStore` for single-instance apps or implement it with Redis.
+   */
+  tokenBlacklist?: ITokenBlacklistStore;
+
+  // --- Two-factor authentication (TOTP) ---
+
+  /**
+   * Enables TOTP two-factor login. Users with a secret (`userService.getTwoFactorSecret`) must send a code
+   * after the password: `login()` throws `TwoFactorRequiredException` (401 with `mfaToken`), and
+   * `verifyTwoFactorLogin(mfaToken, code)` returns the tokens.
+   */
+  twoFactor?: TwoFactorOptions;
+
+  // --- API keys ---
+
+  /** Validates API keys for `@ApiKeyAuth()` routes. */
+  apiKeyService?: IApiKeyService;
+  /**
+   * Header that carries the API key. `Authorization: ApiKey <key>` is also accepted.
+   * @default 'x-api-key'
+   */
+  apiKeyHeader?: string;
+
+  // --- Action tokens (password reset, e-mail verification, ...) ---
+
+  /**
+   * Secret for action tokens (password reset, e-mail verification, magic links).
+   * Falls back to `jwtSecret`; the `type` claim keeps them from being used as access tokens.
+   */
+  actionTokenSecret?: string;
+  /**
+   * Password reset token lifetime.
+   * @default '15m'
+   */
+  passwordResetExpiresIn?: string | number;
+
+  // --- Token extraction & payload ---
+
+  /**
+   * Name of a cookie that may carry the access token (requires `cookie-parser`).
+   * The `Authorization: Bearer` header is always checked first.
+   */
+  accessTokenCookieName?: string;
+
+  /**
+   * Adds custom claims to the token payload (e.g. tenantId, permissions).
+   * Reserved claims (sub, username, roles, type, jti, iat, exp, iss, aud) cannot be overridden.
+   * Custom claims are exposed as `request.user.claims`.
+   */
+  buildPayload?: (user: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>;
+
+  /**
+   * Extra validation executed on every authenticated request after the JWT is verified
+   * (e.g. check the user still exists/is active, or a token blacklist).
+   * Return the user to attach to the request, or null/false to reject with 401.
+   */
+  validateJwtPayload?: (
+    payload: JwtPayload,
+    user: RequestUser
+  ) => RequestUser | null | false | Promise<RequestUser | null | false>;
+
+  /**
+   * Checks whether the user may authenticate (e.g. email verified, not banned).
+   * Called on login and refresh. Returning false responds with the same generic 401.
+   */
+  isUserActive?: (user: Record<string, unknown>) => boolean | Promise<boolean>;
+
+  /**
+   * Normalizes the identifier before lookup, rate limit and lockout (e.g. `(v) => v.trim().toLowerCase()`).
+   */
+  normalizeIdentifier?: (identifier: string) => string;
+
   // --- Cybersecurity options ---
 
   /**
    * When true, enforces: jwtIssuer and jwtAudience required, access token expiresIn <= 1 hour,
-   * and JWT secret length >= 32. Use in production.
+   * JWT secret length >= 32, and a distinct refreshSecret when refresh tokens are enabled. Use in production.
    */
   strictMode?: boolean;
 
@@ -76,24 +197,48 @@ export interface AuthOptions {
 
   /** Account lockout: max failed attempts before locking. Requires userService lockout methods. */
   lockoutMaxAttempts?: number;
-  /** Account lockout: duration in minutes. */
+  /**
+   * Account lockout: duration in minutes. Forwarded to `recordFailedLogin`.
+   * @default 15
+   */
   lockoutDurationMinutes?: number;
 
   /** Security audit: called after successful login. Do not throw. */
-  onLoginSuccess?: (userId: string, identifier: string) => void | Promise<void>;
+  onLoginSuccess?: (userId: string, identifier: string, context?: AuthContext) => void | Promise<void>;
   /** Security audit: called after failed login (invalid credentials or locked). Do not throw. */
-  onLoginFailure?: (identifier: string, reason: string) => void | Promise<void>;
+  onLoginFailure?: (identifier: string, reason: LoginFailureReason, context?: AuthContext) => void | Promise<void>;
   /** Security audit: called after successful refresh. Do not throw. */
-  onRefreshSuccess?: (userId: string) => void | Promise<void>;
+  onRefreshSuccess?: (userId: string, context?: AuthContext) => void | Promise<void>;
   /** Security audit: called after failed refresh. Do not throw. */
-  onRefreshFailure?: (reason: string) => void | Promise<void>;
+  onRefreshFailure?: (reason: RefreshFailureReason, context?: AuthContext) => void | Promise<void>;
+  /** Security audit: called after logout. Do not throw. */
+  onLogout?: (userId: string, context?: AuthContext) => void | Promise<void>;
+  /** Security audit: called after a password change or reset. Do not throw. */
+  onPasswordChanged?: (userId: string, method: "change" | "reset", context?: AuthContext) => void | Promise<void>;
 
-  /** Rate limit: max login attempts per key (e.g. IP + identifier) per window. */
+  /** Rate limit: max login attempts per key (identifier, or IP + identifier when context.ip is given) per window. */
   rateLimitMaxAttempts?: number;
   /** Rate limit: window in milliseconds. */
   rateLimitWindowMs?: number;
   /** Rate limit store. If not provided, rate limiting is skipped. */
   rateLimitStore?: ILoginRateLimitStore;
+}
+
+export interface TwoFactorOptions {
+  /** Issuer name shown in authenticator apps. */
+  issuer?: string;
+  /** Accepted time steps before/after the current one. @default 1 */
+  window?: number;
+  /** Lifetime of the `mfaToken` between password and code. @default '5m' */
+  mfaTokenExpiresIn?: string | number;
+}
+
+/**
+ * Validates API keys. Receives the SHA-256 hash of the key (see `generateApiKey`/`hashApiKey`):
+ * store only hashes and look keys up by them.
+ */
+export interface IApiKeyService {
+  validateApiKey(keyHash: string, context?: AuthContext): Promise<RequestUser | null>;
 }
 
 /**

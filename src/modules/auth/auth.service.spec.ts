@@ -151,7 +151,7 @@ describe("AuthService", () => {
       }).compile();
       const svc = mod.get<AuthService>(AuthService);
       await svc.generateTokens(mockUser);
-      expect(userService.saveRefreshToken).toHaveBeenCalledWith("user-1", "token");
+      expect(userService.saveRefreshToken).toHaveBeenCalledWith("user-1", "token", expect.objectContaining({ sessionId: expect.any(String) }));
     });
   });
 
@@ -173,7 +173,7 @@ describe("AuthService", () => {
             provide: JwtService,
             useValue: {
               signAsync: jest.fn().mockResolvedValue("new-token"),
-              verifyAsync: jest.fn().mockResolvedValue({ sub: mockUser.id }),
+              verifyAsync: jest.fn().mockResolvedValue({ sub: mockUser.id, type: "refresh" }),
             },
           },
           { provide: "ENCRYPTION_SERVICE", useValue: encryptionService },
