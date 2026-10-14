@@ -173,7 +173,7 @@ describe("AuthService", () => {
             provide: JwtService,
             useValue: {
               signAsync: jest.fn().mockResolvedValue("new-token"),
-              verifyAsync: jest.fn().mockResolvedValue({ sub: mockUser.id }),
+              verifyAsync: jest.fn().mockResolvedValue({ sub: mockUser.id, type: "refresh" }),
             },
           },
           { provide: "ENCRYPTION_SERVICE", useValue: encryptionService },

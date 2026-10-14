@@ -1,7 +1,8 @@
 import { ExecutionContext, ForbiddenException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { RolesGuard } from "./roles.guard";
-import { ROLES_KEY } from "../decorators/roles.decorator";
+import { ROLES_KEY, ROLES_MATCH_KEY } from "../decorators/roles.decorator";
+import { IS_PUBLIC_KEY } from "../decorators/public.decorator";
 
 describe("RolesGuard", () => {
   let guard: RolesGuard;
@@ -60,5 +61,34 @@ describe("RolesGuard", () => {
 
     expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
     expect(() => guard.canActivate(context)).toThrow("Insufficient permissions");
+  });
+});
+
+describe("RolesGuard (match modes)", () => {
+  const ctx = (roles: string[]) =>
+    ({
+      getHandler: () => ({}),
+      getClass: () => ({}),
+      switchToHttp: () => ({ getRequest: () => ({ user: { id: "1", username: "u", roles } }) }),
+    }) as unknown as ExecutionContext;
+
+  const guardWith = (metadata: Record<string, unknown>) => {
+    const reflector = new Reflector();
+    jest.spyOn(reflector, "getAllAndOverride").mockImplementation((key) => metadata[key as string]);
+    return new RolesGuard(reflector);
+  };
+
+  it("allows when the required roles list is empty (@Authorize())", () => {
+    expect(guardWith({ [ROLES_KEY]: [] }).canActivate(ctx([]))).toBe(true);
+  });
+
+  it("'all' mode requires every role", () => {
+    const guard = guardWith({ [ROLES_KEY]: ["a", "b"], [ROLES_MATCH_KEY]: "all" });
+    expect(() => guard.canActivate(ctx(["a"]))).toThrow(ForbiddenException);
+    expect(guard.canActivate(ctx(["a", "b"]))).toBe(true);
+  });
+
+  it("skips public routes", () => {
+    expect(guardWith({ [ROLES_KEY]: ["admin"], [IS_PUBLIC_KEY]: true }).canActivate(ctx([]))).toBe(true);
   });
 });

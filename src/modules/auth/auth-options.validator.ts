@@ -2,20 +2,23 @@ import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
 import { MODULE_OPTIONS_TOKEN } from "./auth.module-definition";
 import type { AuthOptions } from "../../interfaces/auth.options";
 import { SECURITY_CONSTANTS } from "../../security/constants";
+import { parseDurationToSeconds } from "../../utils/duration.util";
 
 const REQUIRED_STRING_MSG = "AuthModule: missing required option";
+const ALGORITHMS = ["HS256", "HS384", "HS512"];
 
-function parseExpiresInToSeconds(expiresIn: string | number): number {
-  if (typeof expiresIn === "number") return expiresIn;
-  const match = expiresIn.match(/^(\d+)(s|m|h|d)$/);
-  if (!match) return 3600;
-  const n = parseInt(match[1], 10);
-  const unit = match[2];
-  if (unit === "s") return n;
-  if (unit === "m") return n * 60;
-  if (unit === "h") return n * 3600;
-  if (unit === "d") return n * 86400;
-  return 3600;
+function parseDurationOption(name: string, value: string | number): number {
+  try {
+    return parseDurationToSeconds(value);
+  } catch {
+    throw new Error(`AuthModule: invalid '${name}' (${String(value)}). Use seconds or a string like '15m', '1h', '7d'.`);
+  }
+}
+
+function assertPositiveInt(name: string, value: number | undefined): void {
+  if (value != null && (!Number.isInteger(value) || value <= 0)) {
+    throw new Error(`AuthModule: '${name}' must be a positive integer.`);
+  }
 }
 
 @Injectable()
@@ -23,52 +26,78 @@ export class AuthOptionsValidator implements OnModuleInit {
   constructor(@Inject(MODULE_OPTIONS_TOKEN) private readonly options: AuthOptions) {}
 
   onModuleInit(): void {
-    if (!this.options.jwtSecret || typeof this.options.jwtSecret !== "string") {
+    const o = this.options;
+    if (!o.jwtSecret || typeof o.jwtSecret !== "string") {
       throw new Error(`${REQUIRED_STRING_MSG} 'jwtSecret'.`);
     }
-    if (this.options.strictMode && this.options.jwtSecret.length < SECURITY_CONSTANTS.MIN_JWT_SECRET_LENGTH) {
+    if (o.strictMode && o.jwtSecret.length < SECURITY_CONSTANTS.MIN_JWT_SECRET_LENGTH) {
       throw new Error(
         `AuthModule (strictMode): 'jwtSecret' must be at least ${SECURITY_CONSTANTS.MIN_JWT_SECRET_LENGTH} characters.`
       );
     }
-    if (this.options.expiresIn === undefined || this.options.expiresIn === null) {
+    if (o.expiresIn === undefined || o.expiresIn === null) {
       throw new Error("AuthModule: missing required option 'expiresIn'.");
     }
-    if (this.options.strictMode) {
-      const seconds = parseExpiresInToSeconds(this.options.expiresIn);
-      if (seconds > SECURITY_CONSTANTS.STRICT_MODE_MAX_EXPIRES_IN_SECONDS) {
+    const accessSeconds = parseDurationOption("expiresIn", o.expiresIn);
+    if (o.refreshExpiresIn != null) {
+      parseDurationOption("refreshExpiresIn", o.refreshExpiresIn);
+    }
+    if (o.jwtAlgorithm && !ALGORITHMS.includes(o.jwtAlgorithm)) {
+      throw new Error(`AuthModule: 'jwtAlgorithm' must be one of ${ALGORITHMS.join(", ")}.`);
+    }
+    if (o.strictMode) {
+      if (accessSeconds > SECURITY_CONSTANTS.STRICT_MODE_MAX_EXPIRES_IN_SECONDS) {
         throw new Error(
           `AuthModule (strictMode): 'expiresIn' must not exceed ${SECURITY_CONSTANTS.STRICT_MODE_MAX_EXPIRES_IN_SECONDS} seconds (1 hour).`
         );
       }
-      if (!this.options.jwtIssuer || !this.options.jwtAudience) {
+      if (!o.jwtIssuer || !o.jwtAudience) {
         throw new Error("AuthModule (strictMode): 'jwtIssuer' and 'jwtAudience' are required.");
       }
+      if (o.useRefreshTokens) {
+        if (!o.refreshSecret || o.refreshSecret === o.jwtSecret) {
+          throw new Error("AuthModule (strictMode): 'refreshSecret' is required and must differ from 'jwtSecret'.");
+        }
+        if (o.refreshSecret.length < SECURITY_CONSTANTS.MIN_JWT_SECRET_LENGTH) {
+          throw new Error(
+            `AuthModule (strictMode): 'refreshSecret' must be at least ${SECURITY_CONSTANTS.MIN_JWT_SECRET_LENGTH} characters.`
+          );
+        }
+      }
     }
-    if (!this.options.identifierField || typeof this.options.identifierField !== "string") {
+    if (!o.identifierField || typeof o.identifierField !== "string") {
       throw new Error(`${REQUIRED_STRING_MSG} 'identifierField'.`);
     }
-    if (!this.options.passwordField || typeof this.options.passwordField !== "string") {
+    if (!o.passwordField || typeof o.passwordField !== "string") {
       throw new Error(`${REQUIRED_STRING_MSG} 'passwordField'.`);
     }
-    if (!this.options.userService || typeof this.options.userService.findOneByField !== "function") {
+    if (!o.userService || typeof o.userService.findOneByField !== "function") {
       throw new Error("AuthModule: missing or invalid 'userService' (must implement findOneByField).");
     }
-    if (!this.options.encryptionService || typeof this.options.encryptionService.compare !== "function") {
+    if (!o.encryptionService || typeof o.encryptionService.compare !== "function") {
       throw new Error("AuthModule: missing or invalid 'encryptionService' (must implement compare).");
     }
-    if (this.options.useRefreshTokens) {
-      if (!this.options.userService.saveRefreshToken) {
+    if (o.useRefreshTokens) {
+      if (!o.userService.saveRefreshToken) {
         throw new Error(
           "AuthModule: 'useRefreshTokens' is true but userService does not implement 'saveRefreshToken'."
         );
       }
     }
+    assertPositiveInt("lockoutMaxAttempts", o.lockoutMaxAttempts);
+    assertPositiveInt("lockoutDurationMinutes", o.lockoutDurationMinutes);
+    assertPositiveInt("rateLimitMaxAttempts", o.rateLimitMaxAttempts);
+    assertPositiveInt("rateLimitWindowMs", o.rateLimitWindowMs);
+    assertPositiveInt("maxIdentifierLength", o.maxIdentifierLength);
+    assertPositiveInt("maxPasswordLength", o.maxPasswordLength);
+    if (o.clockToleranceSeconds != null && (typeof o.clockToleranceSeconds !== "number" || o.clockToleranceSeconds < 0)) {
+      throw new Error("AuthModule: 'clockToleranceSeconds' must be a number >= 0.");
+    }
     if (
-      this.options.lockoutMaxAttempts != null &&
-      (this.options.userService.getLockoutUntil == null ||
-        this.options.userService.recordFailedLogin == null ||
-        this.options.userService.clearFailedLogin == null)
+      o.lockoutMaxAttempts != null &&
+      (o.userService.getLockoutUntil == null ||
+        o.userService.recordFailedLogin == null ||
+        o.userService.clearFailedLogin == null)
     ) {
       throw new Error(
         "AuthModule: 'lockoutMaxAttempts' requires userService to implement getLockoutUntil, recordFailedLogin, and clearFailedLogin."

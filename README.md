@@ -22,6 +22,10 @@ This library focuses on:
 - 🔑 **Configurable Hashing**: **Bcrypt (default)** or **Argon2**, with optional **Pepper** and **OWASP Password Policy**.
 - 🎭 **Native RBAC**: Role-Based Access Control integrated directly into the JWT payload and guarded by a high-performance `RolesGuard`.
 - 🔌 **Provider Agnostic**: Works with any database (Prisma, TypeORM, Mongoose, raw SQL) via simple interface injection.
+- 👤 **`@CurrentUser()`**: Inject the authenticated user (or one of its fields) straight into your handlers.
+- 🚪 **Logout & Token Utilities**: `logout()`, `verifyAccessToken()`, `validateUser()` for WebSockets, GraphQL or custom flows.
+- 🧬 **Custom Claims**: Add tenant ids, permissions or any data to the JWT with `buildPayload`.
+- 🔁 **Transparent Rehash**: Migrate from bcrypt to Argon2 (or raise the cost) without forcing password resets.
 
 ---
 
@@ -194,13 +198,38 @@ export class AuthController {
 }
 ```
 
+#### Logout and the current user
+
+```typescript
+import { Controller, Post, Get, HttpCode, Ip } from '@nestjs/common';
+import { AuthService, CurrentUser, RequestUser } from 'rmc-auth';
+
+@Controller('auth')
+export class SessionController {
+  constructor(private authService: AuthService) {}
+
+  @Post('logout')
+  @HttpCode(204)
+  logout(@CurrentUser('id') userId: string, @Ip() ip: string) {
+    return this.authService.logout(userId, { ip }); // revokes refresh tokens
+  }
+
+  @Get('me')
+  me(@CurrentUser() user: RequestUser) {
+    return user; // { id, username, roles, claims? }
+  }
+}
+```
+
+> Pass `{ ip, userAgent }` as the second argument of `login()` / `refresh()`: rate limiting becomes per IP + identifier and the context is forwarded to the audit hooks.
+
 ### 4. Authorization (RBAC)
 
 Use `@Authorize()` to restrict access based on user roles.
 
 ```typescript
 import { Controller, Get } from '@nestjs/common';
-import { Authorize } from 'rmc-auth';
+import { Authorize, AuthorizeAll } from 'rmc-auth';
 
 @Controller('dashboard')
 export class DashboardController {
@@ -216,8 +245,16 @@ export class DashboardController {
   getProfile() {
     return { message: 'Hello User' };
   }
+
+  @Get('audit')
+  @AuthorizeAll('admin', 'auditor') // 🔒 'admin' AND 'auditor' roles
+  getAudit() {
+    return { data: 'Audit log' };
+  }
 }
 ```
+
+With `globalLock: true`, `@Roles('admin')` alone is enough: authentication and roles are enforced globally.
 
 ---
 
@@ -242,6 +279,16 @@ export class DashboardController {
 | `jwtAudience`       | `string`                      | ❌       | JWT `aud` claim for access tokens.                                          |
 | `refreshIssuer`     | `string`                      | ❌       | `iss` claim for refresh tokens (fallback: `jwtIssuer`).                     |
 | `refreshAudience`   | `string`                      | ❌       | `aud` claim for refresh tokens (fallback: `jwtAudience`).                   |
+| `idField`           | `string`                      | ❌       | Field containing the user id. Default: `'id'`.                              |
+| `hashRefreshTokens` | `boolean`                     | ❌       | Store only the SHA-256 hash of refresh tokens (recommended).                |
+| `jwtAlgorithm`      | `'HS256' \| 'HS384' \| 'HS512'` | ❌     | Signing algorithm; verification accepts only this one. Default: `'HS256'`.  |
+| `clockToleranceSeconds` | `number`                  | ❌       | Clock skew tolerance when verifying tokens. Default: `0`.                   |
+| `accessTokenCookieName` | `string`                  | ❌       | Also read the access token from this cookie (requires `cookie-parser`).     |
+| `buildPayload`      | `(user) => object`            | ❌       | Adds custom claims to the JWT (available as `request.user.claims`).         |
+| `validateJwtPayload`| `(payload, user) => user \| null` | ❌  | Extra check on every request (user still active, blacklist...).            |
+| `isUserActive`      | `(user) => boolean`           | ❌       | Blocks login/refresh for inactive users (same generic 401).                 |
+| `normalizeIdentifier` | `(id) => string`            | ❌       | Normalizes the identifier (e.g. trim + lowercase).                          |
+| `isGlobal`          | `boolean`                     | ❌       | Registers AuthModule globally. Default: `true`.                             |
 
 ### `EncryptionOptions` Configuration
 
@@ -252,12 +299,40 @@ export class DashboardController {
 | `strongPasswordValidation` | `boolean`                   | `false`     | Enforces minimum length (8) and disallows passwords with only numbers.      |
 | `algorithm`            | `'bcrypt' \| 'argon2'`          | `'bcrypt'`  | Hashing algorithm used for `hash` / `compare`.                              |
 | `useOwaspPolicy`       | `boolean`                       | `false`     | If `true`, enforces OWASP password-strength rules instead of simple checks. |
+| `passwordPolicy`       | `PasswordPolicy`                | `undefined` | Custom rules: `minLength`, `maxLength`, `requireUppercase`, `requireLowercase`, `requireNumber`, `requireSymbol`, `disallowOnlyNumbers`, `blacklist`. |
+| `argon2Options`        | `Argon2Options`                 | argon2id, 64 MiB, t=3, p=4 | `type`, `memoryCost`, `timeCost`, `parallelism`.             |
+| `pepperStrategy`       | `'append' \| 'hmac'`            | `'append'`  | `'hmac'` uses HMAC-SHA256 so the pepper is never truncated by bcrypt's 72-byte limit (recommended for new projects). |
+| `checkPasswordBreach`  | `(password) => Promise<boolean>`| `undefined` | Rejects compromised passwords (e.g. HIBP).                                  |
+| `isGlobal`             | `boolean`                       | `false`     | Registers EncryptionModule globally.                                        |
+
+### `AuthService` methods
+
+| Method | Description |
+|--------|-------------|
+| `login(credentials, context?)` | Validates credentials and returns `AuthTokens`. |
+| `refresh(refreshToken, context?)` | Rotates tokens; reuse of an old token revokes every session. |
+| `logout(userId, context?)` | Revokes refresh tokens (`revokeAllTokens`) and fires `onLogout`. |
+| `validateUser(credentials, context?)` | Same checks as `login()`, returns the user without issuing tokens. |
+| `generateTokens(user)` | Issues tokens for a user record (sign-up, OAuth, magic link...). |
+| `verifyAccessToken(token)` | Verifies an access token (WebSockets, GraphQL, microservices). |
+| `decodeToken(token)` | Decodes **without** verifying. Never use it for authorization. |
+
+### `EncryptionService` methods
+
+| Method | Description |
+|--------|-------------|
+| `hash(password)` | Validates the policy, checks breaches and hashes. |
+| `compare(password, hash)` | Detects bcrypt/argon2 from the hash; never throws on malformed hashes. |
+| `validatePassword(password)` | Returns `{ valid, errors }` without hashing (sign-up forms). |
+| `needsRehash(hash)` | `true` when the hash uses another algorithm or weaker parameters. |
 
 ### Exported types (TypeScript)
 
 - `JwtPayload` — JWT claims after verification (`sub`, `username`, `roles?`). Use when decoding tokens or typing payloads.
 - `RequestUser` — Object attached to `request.user` after JWT validation (`id`, `username`, `roles?`). Use to type route handlers.
-- `AuthTokens` — Return type of `login()` and `refresh()`: `{ accessToken: string; refreshToken: string | null }`.
+- `AuthTokens` — Return type of `login()` and `refresh()`: `{ accessToken, refreshToken, tokenType: 'Bearer', expiresIn, refreshExpiresIn? }` (lifetimes in seconds).
+- `AuthContext` — Optional request metadata (`ip`, `userAgent`, ...) for `login()`, `refresh()` and `logout()`.
+- `LoginFailureReason` / `RefreshFailureReason` — Reasons passed to the audit hooks.
 
 Example:
 
@@ -276,13 +351,16 @@ getProfile(@Request() req: { user: RequestUser }) {
 |------------------|-------------|
 | `@Public()`      | Marks a route as public (no JWT required). Use when `globalLock` is `true`. |
 | `@Authorize(...roles)` | Restricts access to users that have at least one of the given roles. Composes `JwtAuthGuard` + `RolesGuard`. |
+| `@AuthorizeAll(...roles)` | Same as `@Authorize`, but the user must have **every** role. |
+| `@CurrentUser(field?)` | Injects `request.user` (or one of its fields) into the handler. |
+| `RolesMatch('any' \| 'all')` | Changes how `@Roles` are matched. |
 | `Roles(...roles)` | Metadata for roles; used by `RolesGuard`. |
 | `JwtAuthGuard`    | Guard that validates the JWT and attaches the user to the request. |
 | `RolesGuard`      | Guard that checks the user has one of the required roles. |
 
 ### Interfaces
 
-- `IAuthUserService` — Implement to plug your user/database layer.
+- `IAuthUserService` — Implement to plug your user/database layer. Optional `updatePasswordHash(userId, hash)` enables transparent rehashing after login.
 - `IEncryptionService` — Implemented by `EncryptionService`; inject when using `AuthModule.registerAsync`.
 
 These allow you to plug in **your own services** while keeping RMC-AUTH fully type-safe and testable.
@@ -294,7 +372,9 @@ These allow you to plug in **your own services** while keeping RMC-AUTH fully ty
 1. **Fail-Safe by Default**: With `globalLock`, we prevent accidental exposure of sensitive endpoints due to developer oversight. You must explicitly open routes with `@Public()`.
 2. **Generic Error Messages**: Login failures always return a generic `Unauthorized` error to prevent **User Enumeration Attacks**.
 3. **Token Rotation**: When a Refresh Token is used, a new pair (Access + Refresh) is issued. If a stolen token is reused, the library detects the anomaly (via `isRefreshTokenValid`) and revokes the entire session history (`revokeAllTokens`).
-4. **Strong Passwords by Design**: You can start with simple rules (`strongPasswordValidation`) and evolve to **OWASP policy + Argon2** without breaking your API.
+4. **Typed Tokens**: Every token carries a `type` claim. Refresh tokens are rejected by the guards and access tokens are rejected by `refresh()`, even when both share the same secret.
+5. **No Algorithm Confusion**: Verification accepts only the configured `jwtAlgorithm`.
+6. **Strong Passwords by Design**: You can start with simple rules (`strongPasswordValidation`) and evolve to **OWASP policy + Argon2** without breaking your API.
 
 ---
 
@@ -305,12 +385,15 @@ RMC-AUTH embeds industry-standard security controls so your app stays secure by 
 | Feature | Description |
 |--------|-------------|
 | **Input validation** | Identifier and password are length-capped (default 256 / 1024 chars) to prevent DoS. Invalid or oversized input returns `BadRequestException` with a generic message. |
-| **Strict mode** | Set `strictMode: true` to enforce: JWT secret ≥ 32 chars, `jwtIssuer` and `jwtAudience` required, access token TTL ≤ 1 hour. |
-| **Account lockout** | Optional: implement `getLockoutUntil`, `recordFailedLogin`, and `clearFailedLogin` on your user service and set `lockoutMaxAttempts` and `lockoutDurationMinutes`. Failed logins are recorded; successful login clears the counter. |
-| **Login rate limiting** | Optional: provide `rateLimitStore` (e.g. `InMemoryLoginRateLimitStore`) and set `rateLimitMaxAttempts` / `rateLimitWindowMs`. Returns `429 Too Many Requests` when exceeded. |
-| **Security audit hooks** | Optional callbacks: `onLoginSuccess`, `onLoginFailure`, `onRefreshSuccess`, `onRefreshFailure` for logging and SIEM. Do not throw inside them. |
+| **Strict mode** | Set `strictMode: true` to enforce: JWT secret ≥ 32 chars, `jwtIssuer` and `jwtAudience` required, access token TTL ≤ 1 hour, distinct `refreshSecret` (≥ 32 chars) when refresh tokens are enabled. |
+| **Account lockout** | Optional: implement `getLockoutUntil`, `recordFailedLogin`, and `clearFailedLogin` on your user service and set `lockoutMaxAttempts` and `lockoutDurationMinutes`. `recordFailedLogin(identifier, { maxAttempts, durationMinutes })` receives the policy; successful login clears the counter. |
+| **Login rate limiting** | Optional: provide `rateLimitStore` (e.g. `InMemoryLoginRateLimitStore`, bounded by `maxEntries`) and set `rateLimitMaxAttempts` / `rateLimitWindowMs`. Keyed by IP + identifier when `context.ip` is given. Returns `429 Too Many Requests` when exceeded. |
+| **Security audit hooks** | Optional callbacks: `onLoginSuccess`, `onLoginFailure`, `onRefreshSuccess`, `onRefreshFailure`, `onLogout` for logging and SIEM. They receive the request context; errors thrown inside them are swallowed. |
 | **Refresh token validation** | Refresh token string is checked for type, non-empty, and max length before verification to avoid abuse. |
 | **Timing-safe comparison** | Export `timingSafeEqual(a, b)` for use in your `isRefreshTokenValid` to prevent timing attacks when comparing tokens. |
+| **Timing-attack protection** | When the user does not exist, a dummy hash comparison runs so response time does not reveal valid identifiers. |
+| **Hashed refresh tokens** | `hashRefreshTokens: true` stores only SHA-256 hashes, so a database leak does not expose usable tokens. |
+| **Secure tokens** | `generateSecureToken()` and `hashToken()` for password reset, e-mail verification, API keys. |
 | **Password breach check** | Optional: set `checkPasswordBreach: async (password) => boolean` in `EncryptionModule` (e.g. HIBP k-anonymity). Rejects compromised passwords before hashing. |
 
 **Example (strict mode + rate limit + hooks):**
@@ -341,6 +424,27 @@ AuthModule.registerAsync({
   }),
 });
 ```
+
+### Migrating password hashes (bcrypt → Argon2)
+
+```typescript
+EncryptionModule.register({ algorithm: 'argon2', pepper: process.env.AUTH_PEPPER });
+
+// UsersService
+async updatePasswordHash(userId: string, newHash: string) {
+  await this.prisma.user.update({ where: { id: userId }, data: { password: newHash } });
+}
+```
+
+`compare()` still verifies old bcrypt hashes. After each successful login, outdated hashes are re-hashed with the current configuration and saved through `updatePasswordHash`.
+
+---
+
+## ⬆️ Upgrading from 1.0.0
+
+- Tokens now carry a `type` claim. Refresh tokens issued by 1.0.0 have no `type` and are rejected by `refresh()`: users simply log in again once.
+- `AuthModule` is registered globally by default (`isGlobal: true`) so `@Authorize()` works in any feature module.
+- Duration options (`expiresIn`, `refreshExpiresIn`) are validated at bootstrap; invalid formats now fail fast.
 
 ---
 

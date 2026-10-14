@@ -5,7 +5,17 @@ export * from "./interfaces/user-service.interface";
 export * from "./interfaces/encryption-service.interface";
 
 // 1.1 Types (JWT, request user, tokens)
-export type { JwtPayload, RequestUser, AuthTokens } from "./types/auth.types";
+export type {
+  JwtPayload,
+  RequestUser,
+  AuthTokens,
+  AuthContext,
+  TokenType,
+  LoginFailureReason,
+  RefreshFailureReason,
+  LockoutPolicy,
+  PasswordValidationResult,
+} from "./types/auth.types";
 
 // 2. Main modules
 export * from './modules/encryption/encryption.module';
@@ -23,6 +33,7 @@ export * from './guards/roles.guard';
 export * from './decorators/public.decorator';
 export * from './decorators/roles.decorator';
 export * from './decorators/auth.decorator';
+export * from './decorators/current-user.decorator';
 
 // 6. Constants (for referencing injection tokens)
 export { MODULE_OPTIONS_TOKEN as AUTH_OPTIONS_TOKEN } from './modules/auth/auth.module-definition';
@@ -31,4 +42,9 @@ export { MODULE_OPTIONS_TOKEN as ENCRYPTION_OPTIONS_TOKEN } from './modules/encr
 // 7. Security (cybersecurity utilities and defaults)
 export { SECURITY_CONSTANTS } from './security/constants';
 export { timingSafeEqual } from './security/timing-safe.util';
+export { generateSecureToken, hashToken } from './security/token.util';
 export { InMemoryLoginRateLimitStore } from './security/login-rate-limit.store';
+export type { InMemoryLoginRateLimitStoreOptions } from './security/login-rate-limit.store';
+
+// 8. Utilities
+export { parseDurationToSeconds } from './utils/duration.util';
