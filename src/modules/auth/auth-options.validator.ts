@@ -65,6 +65,21 @@ export class AuthOptionsValidator implements OnModuleInit {
     ) {
       throw new Error("AuthModule: 'tokenBlacklist' must implement add() and has().");
     }
+    if (o.twoFactor) {
+      if (typeof o.userService?.getTwoFactorSecret !== "function") {
+        throw new Error("AuthModule: 'twoFactor' requires userService to implement getTwoFactorSecret.");
+      }
+      if (o.twoFactor.mfaTokenExpiresIn != null) {
+        parseDurationOption("twoFactor.mfaTokenExpiresIn", o.twoFactor.mfaTokenExpiresIn);
+      }
+      const w = o.twoFactor.window;
+      if (w != null && (!Number.isInteger(w) || w < 0 || w > 10)) {
+        throw new Error("AuthModule: 'twoFactor.window' must be an integer between 0 and 10.");
+      }
+    }
+    if (o.apiKeyService != null && typeof o.apiKeyService.validateApiKey !== "function") {
+      throw new Error("AuthModule: 'apiKeyService' must implement validateApiKey().");
+    }
     if (o.jwtAlgorithm && !ALGORITHMS.includes(o.jwtAlgorithm)) {
       throw new Error(`AuthModule: 'jwtAlgorithm' must be one of ${ALGORITHMS.join(", ")}.`);
     }

@@ -107,6 +107,25 @@ export interface AuthOptions {
    */
   tokenBlacklist?: ITokenBlacklistStore;
 
+  // --- Two-factor authentication (TOTP) ---
+
+  /**
+   * Enables TOTP two-factor login. Users with a secret (`userService.getTwoFactorSecret`) must send a code
+   * after the password: `login()` throws `TwoFactorRequiredException` (401 with `mfaToken`), and
+   * `verifyTwoFactorLogin(mfaToken, code)` returns the tokens.
+   */
+  twoFactor?: TwoFactorOptions;
+
+  // --- API keys ---
+
+  /** Validates API keys for `@ApiKeyAuth()` routes. */
+  apiKeyService?: IApiKeyService;
+  /**
+   * Header that carries the API key. `Authorization: ApiKey <key>` is also accepted.
+   * @default 'x-api-key'
+   */
+  apiKeyHeader?: string;
+
   // --- Action tokens (password reset, e-mail verification, ...) ---
 
   /**
@@ -203,6 +222,23 @@ export interface AuthOptions {
   rateLimitWindowMs?: number;
   /** Rate limit store. If not provided, rate limiting is skipped. */
   rateLimitStore?: ILoginRateLimitStore;
+}
+
+export interface TwoFactorOptions {
+  /** Issuer name shown in authenticator apps. */
+  issuer?: string;
+  /** Accepted time steps before/after the current one. @default 1 */
+  window?: number;
+  /** Lifetime of the `mfaToken` between password and code. @default '5m' */
+  mfaTokenExpiresIn?: string | number;
+}
+
+/**
+ * Validates API keys. Receives the SHA-256 hash of the key (see `generateApiKey`/`hashApiKey`):
+ * store only hashes and look keys up by them.
+ */
+export interface IApiKeyService {
+  validateApiKey(keyHash: string, context?: AuthContext): Promise<RequestUser | null>;
 }
 
 /**

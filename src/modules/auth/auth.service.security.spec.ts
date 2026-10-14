@@ -103,13 +103,13 @@ describe("AuthService (security features, real JWT)", () => {
       const { service, jwt } = await createService({ idField: "uuid" });
       const tokens = await service.login({ email: user.email, password: "correct" });
       expect(jwt.decode(tokens.accessToken).sub).toBe("abc");
-      expect(userService.saveRefreshToken).toHaveBeenCalledWith("abc", tokens.refreshToken);
+      expect(userService.saveRefreshToken).toHaveBeenCalledWith("abc", tokens.refreshToken, expect.any(Object));
     });
 
     it("stores only the SHA-256 hash when hashRefreshTokens is enabled", async () => {
       const { service } = await createService({ hashRefreshTokens: true });
       const tokens = await service.login({ email: user.email, password: "correct" });
-      expect(userService.saveRefreshToken).toHaveBeenCalledWith("u-1", hashToken(tokens.refreshToken!));
+      expect(userService.saveRefreshToken).toHaveBeenCalledWith("u-1", hashToken(tokens.refreshToken!), expect.any(Object));
       await expect(service.refresh(tokens.refreshToken!)).resolves.toHaveProperty("accessToken");
     });
   });

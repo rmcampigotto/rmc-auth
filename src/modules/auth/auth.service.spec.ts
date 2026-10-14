@@ -151,7 +151,7 @@ describe("AuthService", () => {
       }).compile();
       const svc = mod.get<AuthService>(AuthService);
       await svc.generateTokens(mockUser);
-      expect(userService.saveRefreshToken).toHaveBeenCalledWith("user-1", "token");
+      expect(userService.saveRefreshToken).toHaveBeenCalledWith("user-1", "token", expect.objectContaining({ sessionId: expect.any(String) }));
     });
   });
 

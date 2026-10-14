@@ -31,6 +31,10 @@ This library focuses on:
 - 🔑 **Password Reset & Change**: Stateless, single-use reset tokens and `changePassword()` — no extra tables needed.
 - ⛔ **Access Token Revocation**: Kill an access token immediately on logout with a pluggable blacklist.
 - 📡 **GraphQL & WebSockets**: Guards and `@CurrentUser()` work in HTTP, GraphQL and WS contexts.
+- 📱 **Two-Factor Authentication (TOTP)**: Google Authenticator / Authy compatible, recovery codes, replay protection — zero extra dependencies.
+- 🗝️ **API Keys**: `@ApiKeyAuth()` for machine-to-machine access, keys stored only as hashes.
+- 💻 **Multi-device Sessions**: Stable session ids across refresh rotations; revoke a single device.
+- 🔒 **Secret Encryption**: AES-256-GCM helpers to store TOTP secrets and other values encrypted.
 
 ---
 
@@ -357,6 +361,100 @@ Implement `ITokenBlacklistStore` (`add(jti, expiresAt)`, `has(jti)`) with Redis 
 
 ---
 
+### 10. Two-factor authentication (TOTP)
+
+Enable it with `twoFactor` and implement `getTwoFactorSecret` (plus, recommended, `consumeTotpStep` and `consumeRecoveryCode`).
+
+```typescript
+AuthModule.register({ ..., twoFactor: { issuer: 'My App' } });
+
+// IAuthUserService
+async getTwoFactorSecret(userId: string) {
+  const user = await this.repo.findById(userId);
+  return user.totpSecret ? decryptSecret(user.totpSecret, process.env.TOTP_KEY) : null;
+}
+async consumeTotpStep(userId: string, step: number) {  // replay protection
+  const res = await this.repo.updateWhere({ id: userId, lastTotpStep: { lt: step } }, { lastTotpStep: step });
+  return res.count === 1;
+}
+async consumeRecoveryCode(userId: string, codeHash: string) {
+  return this.repo.deleteRecoveryCode(userId, codeHash); // true if it existed
+}
+```
+
+**Enrollment**
+
+```typescript
+@Post('2fa/setup')
+setup(@CurrentUser() user: RequestUser) {
+  return this.authService.setupTwoFactor(user.username); // { secret, otpauthUrl, recoveryCodes, recoveryCodeHashes }
+}
+
+@Post('2fa/confirm')
+async confirm(@CurrentUser('id') id: string, @Body() body: { secret: string; code: string; recoveryCodeHashes: string[] }) {
+  if (!this.authService.confirmTwoFactorSetup(body.secret, body.code)) throw new BadRequestException('Invalid code');
+  await this.users.enableTwoFactor(id, encryptSecret(body.secret, process.env.TOTP_KEY), body.recoveryCodeHashes);
+}
+```
+
+**Login**: `login()` throws `TwoFactorRequiredException` (401 `{ mfaRequired: true, mfaToken }`) for users with 2FA.
+Use `authenticate()` if you prefer a result object instead of an exception.
+
+```typescript
+@Public()
+@Post('login/2fa')
+verify(@Body() body: { mfaToken: string; code: string }) {
+  return this.authService.verifyTwoFactorLogin(body.mfaToken, body.code); // TOTP or recovery code
+}
+```
+
+Use `verifyTwoFactorCode(userId, code)` to protect sensitive actions (disable 2FA, change e-mail).
+
+### 11. API keys
+
+```typescript
+// Issuing a key (e.g. in a dashboard)
+const { key, hash, displayPrefix } = generateApiKey('sk_live'); // show `key` once, store `hash`
+
+// AuthModule options
+apiKeyService: {
+  validateApiKey: async (keyHash) => {
+    const k = await this.repo.findApiKeyByHash(keyHash);
+    return k && !k.revoked ? { id: k.ownerId, username: k.name, permissions: k.scopes } : null;
+  },
+},
+
+// Controller
+@ApiKeyAuth()                       // x-api-key header or Authorization: ApiKey <key>
+@Permissions('reports:read')        // enforced globally with globalLock, or add PermissionsGuard
+@Get('reports')
+reports(@CurrentUser() client: RequestUser) {}
+
+@ApiKeyAuth({ allowJwt: true })     // API key OR Bearer JWT
+@Get('data')
+data() {}
+```
+
+`request.user.authMethod` is `'api_key'` or `'jwt'`.
+
+### 12. Multi-device sessions
+
+When refresh tokens are enabled, every login creates a **session id** that survives refresh rotations.
+`saveRefreshToken` / `isRefreshTokenValid` receive `{ sessionId, jti, expiresAt, context }`:
+store one refresh token per `sessionId` to support several devices per user.
+
+```typescript
+@Get('sessions/current')
+current(@CurrentUser('sessionId') sessionId: string) {}
+
+@Delete('sessions/:id')
+revoke(@CurrentUser('id') userId: string, @Param('id') sessionId: string) {
+  return this.authService.revokeSession(userId, sessionId); // requires userService.revokeSession
+}
+```
+
+---
+
 ## ⚙️ API Reference
 
 ### `AuthOptions` Configuration
@@ -394,6 +492,9 @@ Implement `ITokenBlacklistStore` (`add(jti, expiresAt)`, `has(jti)`) with Redis 
 | `actionTokenSecret` | `string`                      | ❌       | Secret for reset/verification tokens (fallback: `jwtSecret`).               |
 | `passwordResetExpiresIn` | `string \| number`       | ❌       | Reset token TTL. Default: `'15m'`.                                          |
 | `onPasswordChanged` | `(userId, method, ctx) => void` | ❌     | Audit hook for password change/reset.                                       |
+| `twoFactor`         | `{ issuer?, window?, mfaTokenExpiresIn? }` | ❌ | Enables TOTP two-factor login.                                       |
+| `apiKeyService`     | `IApiKeyService`              | ❌       | Validates API keys for `@ApiKeyAuth()`.                                     |
+| `apiKeyHeader`      | `string`                      | ❌       | API key header. Default: `'x-api-key'`.                                    |
 
 ### `EncryptionOptions` Configuration
 
@@ -422,6 +523,12 @@ Implement `ITokenBlacklistStore` (`add(jti, expiresAt)`, `has(jti)`) with Redis 
 | `createPasswordResetToken(identifier)` | Single-use reset token, or `null` if the user does not exist. |
 | `resetPassword(token, newPassword, context?)` | Sets the new password and revokes sessions. |
 | `createActionToken(userId, purpose, expiresIn?, data?)` / `verifyActionToken(token, purpose)` | Signed tokens for e-mail verification, magic links, invites. |
+| `authenticate(credentials, context?)` | Like `login()`, returns `{ status: 'success', tokens }` or `{ status: 'two_factor_required', mfaToken }`. |
+| `verifyTwoFactorLogin(mfaToken, code, context?)` | Second login step (TOTP or recovery code). |
+| `setupTwoFactor(account)` / `confirmTwoFactorSetup(secret, code)` | 2FA enrollment. |
+| `verifyTwoFactorCode(userId, code)` | Re-checks 2FA for sensitive actions. |
+| `revokeSession(userId, sessionId, context?)` | Revokes one device session. |
+| `validateApiKey(key, context?)` | Resolves the owner of an API key. |
 | `validateUser(credentials, context?)` | Same checks as `login()`, returns the user without issuing tokens. |
 | `generateTokens(user)` | Issues tokens for a user record (sign-up, OAuth, magic link...). |
 | `verifyAccessToken(token)` | Verifies an access token (WebSockets, GraphQL, microservices). |
@@ -470,6 +577,24 @@ getProfile(@Request() req: { user: RequestUser }) {
 | `@Permissions(...perms)` | Permission metadata (enforced globally with `globalLock`). |
 | `@AccessToken()` | Injects the raw access token of the request. |
 | `PermissionsGuard` | Guard that checks `request.user.permissions`. |
+| `@ApiKeyAuth(options?)` | Authenticates the route with an API key (`allowJwt` to also accept a JWT). |
+| `ApiKeyGuard` | Guard behind `@ApiKeyAuth()`. |
+| `TwoFactorRequiredException` | Thrown by `login()` when the second factor is required. |
+
+### Standalone utilities
+
+Usable outside NestJS modules as well:
+
+| Function | Description |
+|----------|-------------|
+| `generateTotpSecret()`, `generateTotp()`, `verifyTotp()`, `buildOtpAuthUrl()` | RFC 6238 TOTP (validated against the official test vectors). |
+| `generateRecoveryCodes()`, `hashRecoveryCode()` | One-time 2FA recovery codes. |
+| `encryptSecret()`, `decryptSecret()` | AES-256-GCM encryption for values you must read back. |
+| `generateApiKey()`, `hashApiKey()` | Prefixed API keys and their lookup hash. |
+| `generateSecureToken()`, `hashToken()`, `timingSafeEqual()` | Random tokens, hashing and constant-time comparison. |
+| `parseDurationToSeconds()` | `'15m'`, `'1 hour'`, `'7d'` → seconds. |
+| `expandRoles()`, `permissionMatches()`, `hasPermission()` | Role hierarchy and permission wildcards. |
+| `getRequestFromContext()` | Request object for HTTP, GraphQL and WS contexts. |
 | `Roles(...roles)` | Metadata for roles; used by `RolesGuard`. |
 | `JwtAuthGuard`    | Guard that validates the JWT and attaches the user to the request. |
 | `RolesGuard`      | Guard that checks the user has one of the required roles. |

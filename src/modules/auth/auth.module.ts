@@ -8,6 +8,7 @@ import { APP_GUARD } from "@nestjs/core";
 import { GlobalJwtAuthGuard, JwtAuthGuard } from "../../guards/jwt-auth.guard";
 import { GlobalRolesGuard, RolesGuard } from "../../guards/roles.guard";
 import { GlobalPermissionsGuard, PermissionsGuard } from "../../guards/permissions.guard";
+import { ApiKeyGuard } from "../../guards/api-key.guard";
 import { JwtStrategy } from "../../strategies/jwt.strategy";
 import { PassportModule } from "@nestjs/passport";
 
@@ -41,6 +42,7 @@ import { PassportModule } from "@nestjs/passport";
     JwtAuthGuard,
     RolesGuard,
     PermissionsGuard,
+    ApiKeyGuard,
     {
       provide: 'ENCRYPTION_SERVICE',
       inject: [MODULE_OPTIONS_TOKEN],
@@ -51,6 +53,6 @@ import { PassportModule } from "@nestjs/passport";
     { provide: APP_GUARD, useClass: GlobalRolesGuard },
     { provide: APP_GUARD, useClass: GlobalPermissionsGuard },
   ],
-  exports: [AuthService, JwtAuthGuard, RolesGuard, PermissionsGuard, MODULE_OPTIONS_TOKEN],
+  exports: [AuthService, JwtAuthGuard, RolesGuard, PermissionsGuard, ApiKeyGuard, MODULE_OPTIONS_TOKEN],
 })
 export class AuthModule extends ConfigurableModuleClass {};

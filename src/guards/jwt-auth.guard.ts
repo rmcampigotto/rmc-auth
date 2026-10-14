@@ -2,6 +2,7 @@ import { ExecutionContext, Inject, Injectable, Optional, UnauthorizedException }
 import { Reflector } from "@nestjs/core";
 import { AuthGuard } from "@nestjs/passport";
 import { IS_OPTIONAL_AUTH_KEY, IS_PUBLIC_KEY } from "../decorators/public.decorator";
+import { API_KEY_AUTH_KEY } from "../decorators/api-key.decorator";
 import { MODULE_OPTIONS_TOKEN } from "../modules/auth/auth.module-definition";
 import type { AuthOptions } from "../interfaces/auth.options";
 import type { RequestUser } from "../types/auth.types";
@@ -68,6 +69,8 @@ export class JwtAuthGuard extends AuthGuard("jwt") {
 @Injectable()
 export class GlobalJwtAuthGuard extends JwtAuthGuard {
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    // `@ApiKeyAuth()` routes are authenticated by ApiKeyGuard.
+    if (this.reflector.getAllAndOverride(API_KEY_AUTH_KEY, [context.getHandler(), context.getClass()])) return true;
     if (!this.options?.globalLock && !this.isOptional(context)) return true;
     return super.canActivate(context);
   }

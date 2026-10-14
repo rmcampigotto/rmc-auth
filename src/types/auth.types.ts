@@ -16,6 +16,8 @@ export interface JwtPayload {
   permissions?: string[];
   /** Token kind. Only access tokens authenticate requests. */
   type?: TokenType;
+  /** Session id: stable across refresh rotations, identifies a device/login. */
+  sid?: string;
   /** Purpose of an action token (e.g. 'password_reset', 'email_verification'). */
   purpose?: string;
   /** Unique token id (used for rotation and revocation). */
@@ -38,6 +40,10 @@ export interface RequestUser {
   roles?: string[];
   /** Fine-grained permissions (when `permissionsField` is configured). */
   permissions?: string[];
+  /** Session id of the token (when refresh tokens are enabled). */
+  sessionId?: string;
+  /** How the request was authenticated. */
+  authMethod?: "jwt" | "api_key";
   /** Custom claims added through `AuthOptions.buildPayload`, if any. */
   claims?: Record<string, unknown>;
 }
@@ -54,6 +60,8 @@ export interface AuthTokens {
   expiresIn?: number;
   /** Refresh token lifetime in seconds (only when refresh tokens are enabled). */
   refreshExpiresIn?: number;
+  /** Session id (only when refresh tokens are enabled). */
+  sessionId?: string;
 }
 
 /**
@@ -69,6 +77,7 @@ export interface AuthContext {
 /** Reasons reported to `onLoginFailure`. */
 export type LoginFailureReason =
   | "invalid_input"
+  | "invalid_two_factor_code"
   | "rate_limit_exceeded"
   | "account_locked"
   | "user_not_found"
@@ -83,6 +92,31 @@ export type RefreshFailureReason =
   | "user_not_found"
   | "user_inactive"
   | "token_compromised";
+
+/** Metadata passed to `saveRefreshToken` / `isRefreshTokenValid` (multi-device sessions). */
+export interface RefreshSessionInfo {
+  /** Stable id of the session (device). Kept across refresh rotations. */
+  sessionId: string;
+  /** Unique id of this refresh token. */
+  jti: string;
+  /** When this refresh token expires. Use it to clean up stored sessions. */
+  expiresAt: Date;
+  /** Request context of the login/refresh (ip, userAgent), when provided. */
+  context?: AuthContext;
+}
+
+/** Result of `AuthService.authenticate()`. */
+export type AuthResult =
+  | { status: "success"; tokens: AuthTokens }
+  | { status: "two_factor_required"; mfaToken: string; expiresIn: number };
+
+/** Result of `AuthService.setupTwoFactor()`. Persist `secret` (encrypted) and `recoveryCodeHashes` after confirmation. */
+export interface TwoFactorSetup {
+  secret: string;
+  otpauthUrl: string;
+  recoveryCodes: string[];
+  recoveryCodeHashes: string[];
+}
 
 /** Result of `AuthService.createPasswordResetToken()`. */
 export interface PasswordResetToken {

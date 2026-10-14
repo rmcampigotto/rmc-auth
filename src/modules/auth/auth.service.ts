@@ -4,7 +4,19 @@ import { MODULE_OPTIONS_TOKEN } from "./auth.module-definition";
 import type { AuthOptions } from "../../interfaces/auth.options";
 import { JwtService } from "@nestjs/jwt";
 import type { IEncryptionService } from "../../interfaces/encryption-service.interface";
-import type { AuthContext, AuthTokens, JwtPayload, PasswordResetToken } from "../../types/auth.types";
+import type {
+  AuthContext,
+  AuthResult,
+  AuthTokens,
+  JwtPayload,
+  PasswordResetToken,
+  RefreshSessionInfo,
+  RequestUser,
+  TwoFactorSetup,
+} from "../../types/auth.types";
+import { TwoFactorRequiredException } from "../../exceptions/two-factor-required.exception";
+import { buildOtpAuthUrl, generateTotpSecret, verifyTotp } from "../../security/totp.util";
+import { generateRecoveryCodes, hashRecoveryCode, normalizeRecoveryCode } from "../../security/recovery-codes.util";
 import { SECURITY_CONSTANTS } from "../../security/constants";
 import { hashToken } from "../../security/token.util";
 import { timingSafeEqual } from "../../security/timing-safe.util";
@@ -14,7 +26,8 @@ type UserRecord = Record<string, unknown>;
 type SignOptions = Parameters<JwtService["signAsync"]>[1];
 type VerifyOptions = Parameters<JwtService["verifyAsync"]>[1];
 
-const RESERVED_CLAIMS = ["sub", "username", "roles", "permissions", "type", "purpose", "jti", "iat", "exp", "nbf", "iss", "aud"];
+const RESERVED_CLAIMS = ["sub", "username", "roles", "permissions", "type", "purpose", "sid", "jti", "iat", "exp", "nbf", "iss", "aud"];
+const MFA_PURPOSE = "mfa_login";
 const PASSWORD_RESET_PURPOSE = "password_reset";
 
 /** Removes undefined keys: jsonwebtoken rejects e.g. `issuer: undefined`. */
@@ -154,10 +167,13 @@ export class AuthService {
   /**
    * Signs an access token (and a refresh token when enabled) for the given user record.
    * Use it for custom flows (e.g. after sign-up, OAuth or magic link).
+   * @param options.sessionId - Keeps an existing session id (used internally on refresh). A new one is created otherwise.
+   * @param options.context - Request context forwarded to `saveRefreshToken`.
    */
-  async generateTokens(user: UserRecord): Promise<AuthTokens> {
+  async generateTokens(user: UserRecord, options: { sessionId?: string; context?: AuthContext } = {}): Promise<AuthTokens> {
     const payload = await this.buildPayload(user);
-    const accessToken = await this.jwtService.signAsync({ ...payload, type: "access", jti: randomUUID() }, compact({
+    const sessionId = this.authOptions.useRefreshTokens ? options.sessionId ?? randomUUID() : undefined;
+    const accessToken = await this.jwtService.signAsync(compact({ ...payload, type: "access", sid: sessionId, jti: randomUUID() }), compact({
       secret: this.authOptions.jwtSecret,
       expiresIn: this.authOptions.expiresIn as string | number,
       issuer: this.authOptions.jwtIssuer,
@@ -176,8 +192,9 @@ export class AuthService {
       if (!this.authOptions.userService.saveRefreshToken) {
         throw new Error("userService must implement saveRefreshToken to use Refresh Tokens");
       }
+      const jti = randomUUID();
       const refreshToken = await this.jwtService.signAsync(
-        { sub: payload.sub, username: payload.username, roles: payload.roles, type: "refresh", jti: randomUUID() },
+        { sub: payload.sub, username: payload.username, roles: payload.roles, type: "refresh", sid: sessionId, jti },
         compact({
           secret: this.refreshSecret,
           expiresIn: this.refreshExpiresIn,
@@ -186,9 +203,17 @@ export class AuthService {
           algorithm: this.algorithm,
         }) as SignOptions
       );
-      await this.authOptions.userService.saveRefreshToken(payload.sub, this.storedRefreshToken(refreshToken));
+      const refreshSeconds = parseDurationToSeconds(this.refreshExpiresIn);
+      const session: RefreshSessionInfo = {
+        sessionId: sessionId!,
+        jti,
+        expiresAt: new Date(Date.now() + refreshSeconds * 1000),
+        context: options.context,
+      };
+      await this.authOptions.userService.saveRefreshToken(payload.sub, this.storedRefreshToken(refreshToken), session);
       tokens.refreshToken = refreshToken;
-      tokens.refreshExpiresIn = parseDurationToSeconds(this.refreshExpiresIn);
+      tokens.refreshExpiresIn = refreshSeconds;
+      tokens.sessionId = sessionId;
     }
 
     return tokens;
@@ -229,8 +254,15 @@ export class AuthService {
     if (!(await this.isActive(user))) throw fail("user_inactive");
 
     const userId = this.getUserId(user);
+    const sessionId = typeof payload.sid === "string" ? payload.sid : randomUUID();
     if (this.authOptions.userService.isRefreshTokenValid) {
-      const isValid = await this.authOptions.userService.isRefreshTokenValid(userId, this.storedRefreshToken(rt));
+      const session: RefreshSessionInfo = {
+        sessionId,
+        jti: String(payload.jti ?? ""),
+        expiresAt: new Date((payload.exp ?? 0) * 1000),
+        context,
+      };
+      const isValid = await this.authOptions.userService.isRefreshTokenValid(userId, this.storedRefreshToken(rt), session);
       if (!isValid) {
         if (this.authOptions.userService.revokeAllTokens) {
           await this.authOptions.userService.revokeAllTokens(userId);
@@ -240,7 +272,7 @@ export class AuthService {
     }
 
     safeFire(() => this.authOptions.onRefreshSuccess?.(userId, context));
-    return this.generateTokens(user);
+    return this.generateTokens(user, { sessionId, context });
   }
 
   /**
@@ -251,6 +283,15 @@ export class AuthService {
    * @throws UnauthorizedException if credentials invalid, account locked or user inactive.
    */
   async validateUser(credentials: Record<string, unknown>, context?: AuthContext): Promise<UserRecord> {
+    const { user, identifier } = await this.checkCredentials(credentials, context);
+    safeFire(() => this.authOptions.onLoginSuccess?.(this.getUserId(user), identifier, context));
+    return user;
+  }
+
+  private async checkCredentials(
+    credentials: Record<string, unknown>,
+    context?: AuthContext
+  ): Promise<{ user: UserRecord; identifier: string }> {
     let input: { identifier: string; password: string };
     try {
       input = this.validateLoginInput(credentials);
@@ -329,8 +370,7 @@ export class AuthService {
       safeFire(async () => us.updatePasswordHash!(userId, await this.encryptionService.hash(password)));
     }
 
-    safeFire(() => this.authOptions.onLoginSuccess?.(userId, identifier, context));
-    return user;
+    return { user, identifier };
   }
 
   /**
@@ -341,8 +381,131 @@ export class AuthService {
    * @throws UnauthorizedException if credentials invalid or account locked.
    */
   async login(credentials: Record<string, unknown>, context?: AuthContext): Promise<AuthTokens> {
-    const user = await this.validateUser(credentials, context);
-    return this.generateTokens(user);
+    const result = await this.authenticate(credentials, context);
+    if (result.status === "two_factor_required") {
+      throw new TwoFactorRequiredException(result.mfaToken, result.expiresIn);
+    }
+    return result.tokens;
+  }
+
+  /**
+   * Same as `login()`, but returns a result object instead of throwing when two-factor authentication is required.
+   * @returns `{ status: 'success', tokens }` or `{ status: 'two_factor_required', mfaToken, expiresIn }`.
+   */
+  async authenticate(credentials: Record<string, unknown>, context?: AuthContext): Promise<AuthResult> {
+    const { user, identifier } = await this.checkCredentials(credentials, context);
+    const userId = this.getUserId(user);
+
+    if (this.authOptions.twoFactor && this.authOptions.userService.getTwoFactorSecret) {
+      const secret = await this.authOptions.userService.getTwoFactorSecret(userId);
+      if (secret) {
+        const expiresIn = this.authOptions.twoFactor.mfaTokenExpiresIn ?? "5m";
+        const mfaToken = await this.createActionToken(userId, MFA_PURPOSE, expiresIn, { identifier });
+        return { status: "two_factor_required", mfaToken, expiresIn: parseDurationToSeconds(expiresIn) };
+      }
+    }
+
+    safeFire(() => this.authOptions.onLoginSuccess?.(userId, identifier, context));
+    return { status: "success", tokens: await this.generateTokens(user, { context }) };
+  }
+
+  /**
+   * Second step of a two-factor login: exchanges the `mfaToken` and a TOTP (or recovery) code for tokens.
+   * Attempts are rate limited per user when `rateLimitStore` is configured.
+   * @throws UnauthorizedException if the mfaToken or the code is invalid.
+   */
+  async verifyTwoFactorLogin(mfaToken: string, code: string, context?: AuthContext): Promise<AuthTokens> {
+    const payload = await this.verifyActionToken(mfaToken, MFA_PURPOSE);
+    const identifier = typeof payload.identifier === "string" ? payload.identifier : "";
+    const store = this.authOptions.rateLimitStore;
+    const rateKey = `mfa:${payload.sub}`;
+    if (store) {
+      const attempts = await store.increment(rateKey, this.authOptions.rateLimitWindowMs ?? 15 * 60 * 1000);
+      if (attempts > (this.authOptions.rateLimitMaxAttempts ?? 10)) {
+        safeFire(() => this.authOptions.onLoginFailure?.(identifier, "rate_limit_exceeded", context));
+        throw new HttpException("Too many attempts. Try again later.", HttpStatus.TOO_MANY_REQUESTS);
+      }
+    }
+
+    const user = await this.findUserById(payload.sub);
+    if (!user || !(await this.isActive(user))) throw new UnauthorizedException("Invalid token");
+
+    if (!(await this.verifyTwoFactorCode(payload.sub, code))) {
+      safeFire(() => this.authOptions.onLoginFailure?.(identifier, "invalid_two_factor_code", context));
+      throw new UnauthorizedException("Invalid two-factor code");
+    }
+
+    if (store) await store.reset(rateKey);
+    safeFire(() => this.authOptions.onLoginSuccess?.(payload.sub, identifier, context));
+    return this.generateTokens(user, { context });
+  }
+
+  /**
+   * Checks a TOTP code (with replay protection when `consumeTotpStep` is implemented) or a recovery code
+   * (when `consumeRecoveryCode` is implemented) for a user with two-factor enabled.
+   * Use it to protect sensitive actions (e.g. disabling 2FA, changing e-mail).
+   */
+  async verifyTwoFactorCode(userId: string, code: string): Promise<boolean> {
+    const us = this.authOptions.userService;
+    if (typeof code !== "string" || !code || code.length > 64 || !us.getTwoFactorSecret) return false;
+    const secret = await us.getTwoFactorSecret(userId);
+    if (!secret) return false;
+
+    const step = verifyTotp(secret, code, { window: this.authOptions.twoFactor?.window ?? 1 });
+    if (step !== null) {
+      return us.consumeTotpStep ? us.consumeTotpStep(userId, step) : true;
+    }
+    if (us.consumeRecoveryCode && normalizeRecoveryCode(code).length >= 8) {
+      return us.consumeRecoveryCode(userId, hashRecoveryCode(code));
+    }
+    return false;
+  }
+
+  /**
+   * Starts two-factor enrollment: generates a TOTP secret, the `otpauth://` URL (render it as a QR code)
+   * and recovery codes. Nothing is stored: confirm with `confirmTwoFactorSetup()` and then persist
+   * the secret (ideally with `encryptSecret()`) and `recoveryCodeHashes`.
+   */
+  async setupTwoFactor(account: string): Promise<TwoFactorSetup> {
+    if (typeof account !== "string" || !account) throw new BadRequestException("Invalid request");
+    const secret = generateTotpSecret();
+    const { codes, hashes } = generateRecoveryCodes();
+    return {
+      secret,
+      otpauthUrl: buildOtpAuthUrl({ secret, account, issuer: this.authOptions.twoFactor?.issuer }),
+      recoveryCodes: codes,
+      recoveryCodeHashes: hashes,
+    };
+  }
+
+  /** Verifies the first code typed by the user during enrollment, proving the authenticator app is set up. */
+  confirmTwoFactorSetup(secret: string, code: string): boolean {
+    return verifyTotp(secret, code, { window: this.authOptions.twoFactor?.window ?? 1 }) !== null;
+  }
+
+  /**
+   * Revokes a single session (device). Requires `userService.revokeSession`.
+   * Get the current session id with `@CurrentUser('sessionId')`.
+   */
+  async revokeSession(userId: string, sessionId: string, context?: AuthContext): Promise<void> {
+    if (!userId || !sessionId) throw new BadRequestException("Invalid request");
+    if (!this.authOptions.userService.revokeSession) {
+      throw new Error("userService must implement revokeSession to revoke individual sessions");
+    }
+    await this.authOptions.userService.revokeSession(userId, sessionId);
+    safeFire(() => this.authOptions.onLogout?.(userId, context));
+  }
+
+  /**
+   * Authenticates an API key (same logic as `@ApiKeyAuth()`). Requires `apiKeyService`.
+   * @returns the user/client the key belongs to, or null.
+   */
+  async validateApiKey(key: string, context?: AuthContext): Promise<RequestUser | null> {
+    const service = this.authOptions.apiKeyService;
+    if (!service) throw new Error("AuthModule: 'apiKeyService' is required to validate API keys");
+    if (typeof key !== "string" || !key || key.length > 512) return null;
+    const user = await service.validateApiKey(hashToken(key), context);
+    return user ? { ...user, authMethod: "api_key" } : null;
   }
 
   /**
@@ -401,13 +564,22 @@ export class AuthService {
   /**
    * Creates a single-use password reset token for the identifier (e.g. e-mail).
    * The token becomes invalid as soon as the password changes, so it cannot be reused. No storage required.
+   * Requests are rate limited per identifier (and IP, when given) if `rateLimitStore` is configured.
    * @returns null when the user does not exist. Always answer the client with the same generic message.
    */
-  async createPasswordResetToken(identifier: string): Promise<PasswordResetToken | null> {
+  async createPasswordResetToken(identifier: string, context?: AuthContext): Promise<PasswordResetToken | null> {
     if (typeof identifier !== "string" || !identifier.trim() || identifier.length > this.maxIdentifierLength) {
       return null;
     }
     const normalized = this.authOptions.normalizeIdentifier ? this.authOptions.normalizeIdentifier(identifier) : identifier;
+    const store = this.authOptions.rateLimitStore;
+    if (store) {
+      const key = context?.ip ? `reset:${context.ip}:${normalized}` : `reset:${normalized}`;
+      const attempts = await store.increment(key, this.authOptions.rateLimitWindowMs ?? 15 * 60 * 1000);
+      if (attempts > (this.authOptions.rateLimitMaxAttempts ?? 10)) {
+        throw new HttpException("Too many attempts. Try again later.", HttpStatus.TOO_MANY_REQUESTS);
+      }
+    }
     const user = (await this.authOptions.userService.findOneByField(this.authOptions.identifierField, normalized)) as UserRecord | null;
     if (!user || !(await this.isActive(user))) return null;
 

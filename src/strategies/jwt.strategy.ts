@@ -6,7 +6,7 @@ import type { AuthOptions } from "../interfaces/auth.options";
 import type { JwtPayload, RequestUser } from "../types/auth.types";
 import { ACCESS_TOKEN_REQUEST_KEY } from "../utils/request.util";
 
-const STANDARD_CLAIMS = ["sub", "username", "roles", "permissions", "type", "purpose", "jti", "iat", "exp", "nbf", "iss", "aud"];
+const STANDARD_CLAIMS = ["sub", "username", "roles", "permissions", "type", "purpose", "sid", "jti", "iat", "exp", "nbf", "iss", "aud"];
 
 function cookieExtractor(cookieName: string): JwtFromRequestFunction {
   return (req) => {
@@ -59,7 +59,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       if (!STANDARD_CLAIMS.includes(key)) claims[key] = value;
     }
 
-    const user: RequestUser = { id: payload.sub, username: payload.username, roles: payload.roles };
+    const user: RequestUser = { id: payload.sub, username: payload.username, roles: payload.roles, authMethod: "jwt" };
+    if (typeof payload.sid === "string") user.sessionId = payload.sid;
     if (Array.isArray(payload.permissions)) user.permissions = payload.permissions;
     if (Object.keys(claims).length > 0) user.claims = claims;
 
