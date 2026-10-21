@@ -9,6 +9,7 @@ import type { IEncryptionService } from "../../interfaces/encryption-service.int
 import { TwoFactorRequiredException } from "../../exceptions/two-factor-required.exception";
 import { generateTotp } from "../../security/totp.util";
 import { InMemoryLoginRateLimitStore } from "../../security/login-rate-limit.store";
+import { InMemoryTokenBlacklistStore } from "../../security/token-blacklist.store";
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -130,6 +131,16 @@ describe("AuthService (two-factor and sessions)", () => {
 
     const { accessToken } = await service.generateTokens(user);
     await expect(service.verifyTwoFactorLogin(accessToken, code)).rejects.toThrow(UnauthorizedException);
+  });
+
+  it("makes the mfaToken single-use when tokenBlacklist is configured", async () => {
+    const { service } = await createService({ tokenBlacklist: new InMemoryTokenBlacklistStore() });
+    const { recoveryCodes } = await enroll(service);
+    const { mfaToken } = (await service.authenticate(credentials)) as { mfaToken: string };
+
+    await service.verifyTwoFactorLogin(mfaToken, generateTotp(secret!));
+    await expect(service.verifyTwoFactorLogin(mfaToken, recoveryCodes[0])).rejects.toThrow(UnauthorizedException);
+    expect(recoveryHashes.size).toBe(recoveryCodes.length); // not consumed
   });
 
   it("accepts each recovery code once", async () => {

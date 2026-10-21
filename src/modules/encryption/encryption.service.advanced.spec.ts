@@ -76,12 +76,21 @@ describe("EncryptionService (advanced)", () => {
       await expect(svc.compare("Password2", hash)).resolves.toBe(false);
     });
 
+    it("rejects bcrypt passwords over 72 bytes (they would collide after truncation)", async () => {
+      const svc = await create({ saltRounds: 4 });
+      expect(svc.validatePassword("a".repeat(72)).valid).toBe(true);
+      expect(svc.validatePassword("é".repeat(37))).toEqual({ valid: false, errors: ["Maximum 72 bytes allowed."] });
+      await expect(svc.hash("a".repeat(73))).rejects.toThrow(BadRequestException);
+
+      const argon = await create({ algorithm: "argon2", argon2Options: FAST_ARGON });
+      expect(argon.validatePassword("a".repeat(100)).valid).toBe(true);
+    });
+
     it("hmac pepper strategy keeps the pepper effective beyond bcrypt's 72-byte limit", async () => {
       const long = "a".repeat(80);
-      const appendA = await create({ saltRounds: 4, pepper: "pepper-A" });
-      const appendB = await create({ saltRounds: 4, pepper: "pepper-B" });
-      // With 'append', the pepper is truncated away: a different pepper still matches.
-      await expect(appendB.compare(long, await appendA.hash(long))).resolves.toBe(true);
+      const append = await create({ saltRounds: 4, pepper: "pepper-A" });
+      // With 'append', the pepper would be truncated away, so such passwords are rejected.
+      await expect(append.hash(long)).rejects.toThrow(BadRequestException);
 
       const hmacA = await create({ saltRounds: 4, pepper: "pepper-A", pepperStrategy: "hmac" });
       const hmacB = await create({ saltRounds: 4, pepper: "pepper-B", pepperStrategy: "hmac" });

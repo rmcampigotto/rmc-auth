@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { MODULE_OPTIONS_TOKEN } from "./auth.module-definition";
 import type { AuthOptions } from "../../interfaces/auth.options";
 import { SECURITY_CONSTANTS } from "../../security/constants";
@@ -23,6 +23,8 @@ function assertPositiveInt(name: string, value: number | undefined): void {
 
 @Injectable()
 export class AuthOptionsValidator implements OnModuleInit {
+  private readonly logger = new Logger("AuthModule");
+
   constructor(@Inject(MODULE_OPTIONS_TOKEN) private readonly options: AuthOptions) {}
 
   onModuleInit(): void {
@@ -120,6 +122,12 @@ export class AuthOptionsValidator implements OnModuleInit {
         throw new Error(
           "AuthModule: 'useRefreshTokens' is true but userService does not implement 'saveRefreshToken'."
         );
+      }
+      if (!o.userService.isRefreshTokenValid || !o.userService.revokeAllTokens) {
+        const message =
+          "'useRefreshTokens' without userService.isRefreshTokenValid and revokeAllTokens: refresh tokens cannot be rotated, revoked on logout or checked for reuse.";
+        if (o.strictMode) throw new Error(`AuthModule (strictMode): ${message}`);
+        this.logger.warn(message);
       }
     }
     assertPositiveInt("lockoutMaxAttempts", o.lockoutMaxAttempts);

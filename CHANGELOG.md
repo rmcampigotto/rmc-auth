@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- bcrypt: passwords over 72 bytes are rejected by `hash()` / `validatePassword()` (bcrypt ignores everything after byte 72, so two such passwords could match each other). Not applied with argon2 or `pepperStrategy: 'hmac'`; existing hashes still verify.
+- The `mfaToken` of a two-factor login is single-use when `tokenBlacklist` is configured.
+- `changePassword()` is rate limited per user when `rateLimitStore` is configured (stops brute-forcing the current password with a stolen access token).
+- `refresh()` rejects tokens without a `sub` claim before looking up the user.
+
+### Changed
+
+- Strict mode requires `userService.isRefreshTokenValid` and `revokeAllTokens` when `useRefreshTokens` is true; without strict mode a warning is logged, since refresh tokens could not be rotated or revoked.
+- A warning is logged when bcrypt is used with a pepper and `pepperStrategy: 'append'`.
+
 ## [2.0.0] - 2026-10-14
 
 ### Added

@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { MODULE_OPTIONS_TOKEN } from "./encryption.module-definition";
 import type { EncryptionOptions } from "../../interfaces/encryption.options";
 
@@ -8,6 +8,8 @@ function isPositiveInt(value: unknown): value is number {
 
 @Injectable()
 export class EncryptionOptionsValidator implements OnModuleInit {
+  private readonly logger = new Logger("EncryptionModule");
+
   constructor(@Inject(MODULE_OPTIONS_TOKEN) private readonly options: EncryptionOptions) {}
 
   onModuleInit(): void {
@@ -40,6 +42,11 @@ export class EncryptionOptionsValidator implements OnModuleInit {
     }
     if (this.options.pepperStrategy && !["append", "hmac"].includes(this.options.pepperStrategy)) {
       throw new Error("EncryptionModule: 'pepperStrategy' must be 'append' or 'hmac'.");
+    }
+    if (algorithm === "bcrypt" && this.options.pepper && (this.options.pepperStrategy ?? "append") === "append") {
+      this.logger.warn(
+        "'pepper' with pepperStrategy 'append' and bcrypt: input over 72 bytes is truncated, so long passwords lose the pepper. Use pepperStrategy: 'hmac' for new projects."
+      );
     }
     const policy = this.options.passwordPolicy;
     if (policy) {

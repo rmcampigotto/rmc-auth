@@ -137,6 +137,16 @@ describe("AuthService (security features, real JWT)", () => {
       expect(onRefreshFailure).toHaveBeenCalledWith("wrong_token_type", undefined);
     });
 
+    it("rejects a signed refresh token without subject", async () => {
+      const { service, jwt, options } = await createService();
+      const token = await jwt.signAsync(
+        { type: "refresh", jti: "x" },
+        { secret: options.refreshSecret, issuer: "iss", audience: "aud", expiresIn: 60 }
+      );
+      await expect(service.refresh(token)).rejects.toThrow(UnauthorizedException);
+      expect(userService.findOneByField).not.toHaveBeenCalled();
+    });
+
     it("rejects refresh for inactive users", async () => {
       const { service } = await createService();
       const { refreshToken } = await service.login({ email: user.email, password: "correct" });

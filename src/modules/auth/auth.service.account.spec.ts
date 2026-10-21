@@ -1,12 +1,13 @@
 import { Test } from "@nestjs/testing";
 import { JwtModule, JwtService } from "@nestjs/jwt";
-import { BadRequestException, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, HttpException, UnauthorizedException } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { MODULE_OPTIONS_TOKEN } from "./auth.module-definition";
 import type { AuthOptions } from "../../interfaces/auth.options";
 import type { IAuthUserService } from "../../interfaces/user-service.interface";
 import type { IEncryptionService } from "../../interfaces/encryption-service.interface";
 import { InMemoryTokenBlacklistStore } from "../../security/token-blacklist.store";
+import { InMemoryLoginRateLimitStore } from "../../security/login-rate-limit.store";
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -120,6 +121,14 @@ describe("AuthService (accounts: permissions, revocation, passwords, action toke
       const { service } = await createService();
       await expect(service.changePassword("u-1", "Old-Password1", "Old-Password1")).rejects.toThrow(BadRequestException);
       await expect(service.changePassword("u-1", "Old-Password1", "short")).rejects.toThrow(BadRequestException);
+    });
+
+    it("rate limits attempts per user", async () => {
+      const { service } = await createService({ rateLimitStore: new InMemoryLoginRateLimitStore(), rateLimitMaxAttempts: 2 });
+      await expect(service.changePassword("u-1", "wrong", "New-Password1")).rejects.toThrow(UnauthorizedException);
+      await expect(service.changePassword("u-1", "wrong", "New-Password1")).rejects.toThrow(UnauthorizedException);
+      await expect(service.changePassword("u-1", "Old-Password1", "New-Password1")).rejects.toThrow(HttpException);
+      expect(userService.updatePasswordHash).not.toHaveBeenCalled();
     });
 
     it("requires updatePasswordHash", async () => {

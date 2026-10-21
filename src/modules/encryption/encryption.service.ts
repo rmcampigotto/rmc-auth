@@ -8,6 +8,9 @@ import * as bcrypt from "bcrypt";
 import * as argon2 from "argon2";
 import owasp from "owasp-password-strength-test";
 
+/** bcrypt ignores every byte after the 72nd. */
+const BCRYPT_MAX_BYTES = 72;
+
 const ARGON2_TYPES = { argon2d: argon2.argon2d, argon2i: argon2.argon2i, argon2id: argon2.argon2id } as const;
 
 type HashAlgorithm = "bcrypt" | "argon2";
@@ -70,12 +73,22 @@ export class EncryptionService implements IEncryptionService {
       return { valid: false, errors: ["Password is required."] };
     }
 
-    if (this.options.useOwaspPolicy) {
-      const result = owasp.test(password);
-      return { valid: result.strong, errors: result.strong ? [] : result.errors };
+    const errors: string[] = [];
+    // Passwords that only differ after byte 72 would produce the same bcrypt hash. HMAC pepper has a fixed length.
+    if (
+      this.algorithm === "bcrypt" &&
+      !(this.options.pepper && this.options.pepperStrategy === "hmac") &&
+      Buffer.byteLength(password, "utf8") > BCRYPT_MAX_BYTES
+    ) {
+      errors.push(`Maximum ${BCRYPT_MAX_BYTES} bytes allowed.`);
     }
 
-    const errors: string[] = [];
+    if (this.options.useOwaspPolicy) {
+      const result = owasp.test(password);
+      errors.push(...(result.strong ? [] : result.errors));
+      return { valid: errors.length === 0, errors };
+    }
+
     const policy = this.options.passwordPolicy;
 
     if (policy) {

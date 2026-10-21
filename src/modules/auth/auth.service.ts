@@ -248,6 +248,7 @@ export class AuthService {
     }
 
     if (payload.type !== "refresh") throw fail("wrong_token_type");
+    if (typeof payload.sub !== "string" || !payload.sub) throw fail("verification_failed");
 
     const user = (await this.authOptions.userService.findOneByField(this.idField, payload.sub)) as UserRecord | null;
     if (!user) throw fail("user_not_found");
@@ -412,10 +413,15 @@ export class AuthService {
   /**
    * Second step of a two-factor login: exchanges the `mfaToken` and a TOTP (or recovery) code for tokens.
    * Attempts are rate limited per user when `rateLimitStore` is configured.
+   * The mfaToken is single-use when `tokenBlacklist` is configured.
    * @throws UnauthorizedException if the mfaToken or the code is invalid.
    */
   async verifyTwoFactorLogin(mfaToken: string, code: string, context?: AuthContext): Promise<AuthTokens> {
     const payload = await this.verifyActionToken(mfaToken, MFA_PURPOSE);
+    const blacklist = this.authOptions.tokenBlacklist;
+    if (blacklist && payload.jti && (await blacklist.has(payload.jti))) {
+      throw new UnauthorizedException("Invalid token");
+    }
     const identifier = typeof payload.identifier === "string" ? payload.identifier : "";
     const store = this.authOptions.rateLimitStore;
     const rateKey = `mfa:${payload.sub}`;
@@ -436,6 +442,10 @@ export class AuthService {
     }
 
     if (store) await store.reset(rateKey);
+    if (blacklist && payload.jti) {
+      const expiresAt = typeof payload.exp === "number" ? payload.exp * 1000 : Date.now() + 3600 * 1000;
+      await blacklist.add(payload.jti, expiresAt);
+    }
     safeFire(() => this.authOptions.onLoginSuccess?.(payload.sub, identifier, context));
     return this.generateTokens(user, { context });
   }
@@ -542,6 +552,8 @@ export class AuthService {
   /**
    * Changes the password of an authenticated user after checking the current one.
    * Revokes every refresh token (other sessions must log in again). Requires `userService.updatePasswordHash`.
+   * Attempts are rate limited per user when `rateLimitStore` is configured.
+   * @throws HttpException (429) if rate limit exceeded.
    * @throws UnauthorizedException if the current password is wrong.
    * @throws BadRequestException if the new password violates the policy or equals the current one.
    */
@@ -551,9 +563,19 @@ export class AuthService {
     }
     const user = userId ? await this.findUserById(userId) : null;
     if (!user) throw new UnauthorizedException("Invalid Credentials");
+    // Stops brute-forcing the current password with a stolen access token.
+    const store = this.authOptions.rateLimitStore;
+    const rateKey = `change-password:${this.getUserId(user)}`;
+    if (store) {
+      const attempts = await store.increment(rateKey, this.authOptions.rateLimitWindowMs ?? 15 * 60 * 1000);
+      if (attempts > (this.authOptions.rateLimitMaxAttempts ?? 10)) {
+        throw new HttpException("Too many attempts. Try again later.", HttpStatus.TOO_MANY_REQUESTS);
+      }
+    }
     const storedHash = user[this.authOptions.passwordField];
     const valid = await this.encryptionService.compare(currentPassword, typeof storedHash === "string" ? storedHash : "");
     if (!valid) throw new UnauthorizedException("Invalid Credentials");
+    if (store) await store.reset(rateKey);
     if (currentPassword === newPassword) {
       throw new BadRequestException("New password must be different from the current one.");
     }

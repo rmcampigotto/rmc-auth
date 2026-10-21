@@ -64,6 +64,8 @@ describe("AuthModule (full wiring)", () => {
   const userService: IAuthUserService = {
     findOneByField: async (field, value) => users.find((u) => (u as Record<string, unknown>)[field] === value) ?? null,
     saveRefreshToken: async () => undefined,
+    isRefreshTokenValid: async () => true,
+    revokeAllTokens: async () => undefined,
   };
 
   async function bootstrap(overrides: Partial<AuthOptions> = {}): Promise<TestingModule> {
@@ -132,6 +134,8 @@ describe("AuthModule (full wiring)", () => {
     await expect(bootstrap({ refreshSecret: "a".repeat(32) })).rejects.toThrow("refreshSecret");
     await expect(bootstrap({ expiresIn: "2h" })).rejects.toThrow("expiresIn");
     await expect(bootstrap({ expiresIn: "soon" })).rejects.toThrow("invalid 'expiresIn'");
+    const { isRefreshTokenValid: _, ...withoutReuseDetection } = userService;
+    await expect(bootstrap({ userService: withoutReuseDetection })).rejects.toThrow("isRefreshTokenValid");
   });
 
   it("globalLock: allows @Public routes and blocks anonymous requests", async () => {
