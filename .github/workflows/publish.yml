@@ -15,16 +15,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 24 ships npm >= 11.5.1, required for trusted publishing.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "24.14.0"
           cache: "npm"
           registry-url: "https://registry.npmjs.org"
-
-      # Trusted publishing requires npm >= 11.5.1
-      - name: Update npm
-        run: npm install -g npm@latest
 
       - name: Check release tag matches package.json
         if: github.event_name == 'release'
