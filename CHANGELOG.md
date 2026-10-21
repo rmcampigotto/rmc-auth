@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-21
+
 ### Security
 
 - bcrypt: passwords over 72 bytes are rejected by `hash()` / `validatePassword()` (bcrypt ignores everything after byte 72, so two such passwords could match each other). Not applied with argon2 or `pepperStrategy: 'hmac'`; existing hashes still verify.
