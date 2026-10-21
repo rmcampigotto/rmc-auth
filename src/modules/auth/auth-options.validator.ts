@@ -79,6 +79,23 @@ export class AuthOptionsValidator implements OnModuleInit {
         throw new Error("AuthModule: 'twoFactor.window' must be an integer between 0 and 10.");
       }
     }
+    for (const name of ["accessTokenCookieName", "refreshTokenCookieName"] as const) {
+      if (o[name] != null && (typeof o[name] !== "string" || !o[name])) {
+        throw new Error(`AuthModule: '${name}' must be a non-empty string.`);
+      }
+    }
+    if (o.cookieOptions) {
+      const { sameSite, secure } = o.cookieOptions;
+      if (sameSite != null && !["strict", "lax", "none"].includes(sameSite)) {
+        throw new Error("AuthModule: 'cookieOptions.sameSite' must be 'strict', 'lax' or 'none'.");
+      }
+      if (sameSite === "none" && secure === false) {
+        throw new Error("AuthModule: 'cookieOptions.sameSite' 'none' requires 'secure: true'.");
+      }
+      if (o.strictMode && secure === false) {
+        throw new Error("AuthModule (strictMode): 'cookieOptions.secure' cannot be false.");
+      }
+    }
     if (o.apiKeyService != null && typeof o.apiKeyService.validateApiKey !== "function") {
       throw new Error("AuthModule: 'apiKeyService' must implement validateApiKey().");
     }

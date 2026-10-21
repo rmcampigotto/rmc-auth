@@ -21,6 +21,7 @@ import { SECURITY_CONSTANTS } from "../../security/constants";
 import { hashToken } from "../../security/token.util";
 import { timingSafeEqual } from "../../security/timing-safe.util";
 import { parseDurationToSeconds } from "../../utils/duration.util";
+import { clearResponseCookie, CookieSettings, setResponseCookie } from "../../utils/cookie.util";
 
 type UserRecord = Record<string, unknown>;
 type SignOptions = Parameters<JwtService["signAsync"]>[1];
@@ -532,6 +533,69 @@ export class AuthService {
       await this.revokeAccessToken(accessToken).catch(() => false);
     }
     safeFire(() => this.authOptions.onLogout?.(userId, context));
+  }
+
+  /**
+   * Logs out only the current device: revokes the session of the user's token (`userService.revokeSession`,
+   * falling back to `revokeAllTokens` when the token has no session or revokeSession is not implemented)
+   * and the access token itself when `tokenBlacklist` is configured.
+   * @param user - `@CurrentUser()`.
+   * @param accessToken - `@AccessToken()`.
+   */
+  async logoutCurrentSession(user: RequestUser, accessToken?: string, context?: AuthContext): Promise<void> {
+    if (!user?.id) throw new BadRequestException("Invalid request");
+    const us = this.authOptions.userService;
+    if (user.sessionId && us.revokeSession) {
+      await us.revokeSession(user.id, user.sessionId);
+    } else if (us.revokeAllTokens) {
+      await us.revokeAllTokens(user.id);
+    }
+    if (accessToken && this.authOptions.tokenBlacklist) {
+      await this.revokeAccessToken(accessToken).catch(() => false);
+    }
+    safeFire(() => this.authOptions.onLogout?.(user.id, context));
+  }
+
+  private cookieSettings(kind: "access" | "refresh"): CookieSettings {
+    const o = this.authOptions.cookieOptions ?? {};
+    const path = o.path ?? "/";
+    return {
+      httpOnly: true,
+      secure: o.secure ?? true,
+      sameSite: o.sameSite ?? "strict",
+      domain: o.domain,
+      path: kind === "refresh" ? o.refreshTokenPath ?? path : path,
+    };
+  }
+
+  /**
+   * Stores the tokens in httpOnly cookies named `accessTokenCookieName` / `refreshTokenCookieName`.
+   * Works with Express (`res.cookie`) and Fastify (`@fastify/cookie`). Get the response with `@Res({ passthrough: true })`.
+   */
+  setAuthCookies(response: unknown, tokens: AuthTokens): void {
+    const { accessTokenCookieName, refreshTokenCookieName } = this.authOptions;
+    if (!accessTokenCookieName && !refreshTokenCookieName) {
+      throw new Error("AuthModule: set 'accessTokenCookieName' and/or 'refreshTokenCookieName' to use cookies");
+    }
+    if (accessTokenCookieName) {
+      setResponseCookie(response, accessTokenCookieName, tokens.accessToken, {
+        ...this.cookieSettings("access"),
+        maxAgeSeconds: tokens.expiresIn,
+      });
+    }
+    if (refreshTokenCookieName && tokens.refreshToken) {
+      setResponseCookie(response, refreshTokenCookieName, tokens.refreshToken, {
+        ...this.cookieSettings("refresh"),
+        maxAgeSeconds: tokens.refreshExpiresIn,
+      });
+    }
+  }
+
+  /** Clears the cookies set by `setAuthCookies()` (e.g. on logout). */
+  clearAuthCookies(response: unknown): void {
+    const { accessTokenCookieName, refreshTokenCookieName } = this.authOptions;
+    if (accessTokenCookieName) clearResponseCookie(response, accessTokenCookieName, this.cookieSettings("access"));
+    if (refreshTokenCookieName) clearResponseCookie(response, refreshTokenCookieName, this.cookieSettings("refresh"));
   }
 
   /**

@@ -134,6 +134,8 @@ describe("AuthModule (full wiring)", () => {
     await expect(bootstrap({ refreshSecret: "a".repeat(32) })).rejects.toThrow("refreshSecret");
     await expect(bootstrap({ expiresIn: "2h" })).rejects.toThrow("expiresIn");
     await expect(bootstrap({ expiresIn: "soon" })).rejects.toThrow("invalid 'expiresIn'");
+    await expect(bootstrap({ cookieOptions: { secure: false } })).rejects.toThrow("cookieOptions.secure");
+    await expect(bootstrap({ strictMode: false, cookieOptions: { sameSite: "none", secure: false } })).rejects.toThrow("sameSite");
     const { isRefreshTokenValid: _, ...withoutReuseDetection } = userService;
     await expect(bootstrap({ userService: withoutReuseDetection })).rejects.toThrow("isRefreshTokenValid");
   });

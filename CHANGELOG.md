@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `createAuthController()`: ready-made controller with login, two-factor verify, refresh, logout, me and change-password routes (`path`, `exclude` and `cookies` options).
+- Cookies: `refreshTokenCookieName`, `cookieOptions` and `AuthService.setAuthCookies()` / `clearAuthCookies()` (httpOnly, `secure` and `sameSite: 'strict'` by default; Express and Fastify).
+- `AuthService.logoutCurrentSession()`: logs out only the current device.
+- `@AuthCtx()` decorator and `getAuthContext()`: build `{ ip, userAgent }` from the request.
+
 ## [2.1.0] - 2026-10-21
 
 ### Security

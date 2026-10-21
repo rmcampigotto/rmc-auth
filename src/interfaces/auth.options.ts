@@ -148,6 +148,15 @@ export interface AuthOptions {
   accessTokenCookieName?: string;
 
   /**
+   * Name of the cookie that carries the refresh token. Set by `setAuthCookies()` and read by the
+   * built-in controller (`createAuthController`) when the request body has no `refreshToken`.
+   */
+  refreshTokenCookieName?: string;
+
+  /** Options of the cookies set by `setAuthCookies()`. Cookies are always httpOnly. */
+  cookieOptions?: AuthCookieOptions;
+
+  /**
    * Adds custom claims to the token payload (e.g. tenantId, permissions).
    * Reserved claims (sub, username, roles, type, jti, iat, exp, iss, aud) cannot be overridden.
    * Custom claims are exposed as `request.user.claims`.
@@ -222,6 +231,18 @@ export interface AuthOptions {
   rateLimitWindowMs?: number;
   /** Rate limit store. If not provided, rate limiting is skipped. */
   rateLimitStore?: ILoginRateLimitStore;
+}
+
+export interface AuthCookieOptions {
+  /** Send cookies only over HTTPS. Disable only for local development. @default true */
+  secure?: boolean;
+  /** `'none'` requires `secure`. @default 'strict' */
+  sameSite?: "strict" | "lax" | "none";
+  domain?: string;
+  /** Path of the access token cookie. @default '/' */
+  path?: string;
+  /** Path of the refresh token cookie, e.g. '/auth' so it is only sent to the auth routes. @default path */
+  refreshTokenPath?: string;
 }
 
 export interface TwoFactorOptions {

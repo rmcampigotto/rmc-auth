@@ -45,6 +45,11 @@ export * from './decorators/auth.decorator';
 export * from './decorators/current-user.decorator';
 export * from './decorators/permissions.decorator';
 export * from './decorators/api-key.decorator';
+export { AuthCtx, getAuthContext } from './decorators/auth-context.decorator';
+
+// 5.1 Ready-made controller
+export { createAuthController } from './controllers/auth.controller';
+export type { AuthControllerOptions, AuthControllerRoute } from './controllers/auth.controller';
 
 // 6. Constants (for referencing injection tokens)
 export { MODULE_OPTIONS_TOKEN as AUTH_OPTIONS_TOKEN } from './modules/auth/auth.module-definition';

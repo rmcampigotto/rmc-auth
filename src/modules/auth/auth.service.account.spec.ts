@@ -93,6 +93,17 @@ describe("AuthService (accounts: permissions, revocation, passwords, action toke
       await expect(service.verifyAccessToken(accessToken)).rejects.toThrow(UnauthorizedException);
     });
 
+    it("logoutCurrentSession revokes only the session, or every session when the token has none", async () => {
+      userService.revokeSession = jest.fn().mockResolvedValue(undefined);
+      const { service } = await createService();
+      await service.logoutCurrentSession({ id: "u-1", username: "x", sessionId: "s-1" });
+      expect(userService.revokeSession).toHaveBeenCalledWith("u-1", "s-1");
+      expect(userService.revokeAllTokens).not.toHaveBeenCalled();
+
+      await service.logoutCurrentSession({ id: "u-1", username: "x" });
+      expect(userService.revokeAllTokens).toHaveBeenCalledWith("u-1");
+    });
+
     it("revokeAccessToken requires a blacklist", async () => {
       const { service } = await createService();
       const { accessToken } = await service.generateTokens(user);

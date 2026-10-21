@@ -35,6 +35,9 @@ This library focuses on:
 - 🗝️ **API Keys**: `@ApiKeyAuth()` for machine-to-machine access, keys stored only as hashes.
 - 💻 **Multi-device Sessions**: Stable session ids across refresh rotations; revoke a single device.
 - 🔒 **Secret Encryption**: AES-256-GCM helpers to store TOTP secrets and other values encrypted.
+- 🚀 **Ready-made Controller**: `createAuthController()` gives you login, refresh, logout, me, 2FA and change-password routes in one line.
+- 🍪 **httpOnly Cookies**: `setAuthCookies()` / `clearAuthCookies()` with secure defaults (Express and Fastify).
+- 📱 **Per-device Logout**: `logoutCurrentSession()` signs out only the current device.
 
 ---
 
@@ -183,6 +186,51 @@ AuthModule.registerAsync({
 
 ### 3. Authentication Controller
 
+#### 3.1. Ready-made controller (fastest)
+
+Add one line to any module and you get the common auth routes:
+
+```typescript
+import { Module } from '@nestjs/common';
+import { createAuthController } from 'rmc-auth';
+
+@Module({
+  controllers: [createAuthController({ path: 'auth' })],
+})
+export class AppModule {}
+```
+
+| Route | Body | Response |
+|-------|------|----------|
+| `POST /auth/login` | `{ email, password }` (your `identifierField` / `passwordField`) | tokens, or 401 `{ mfaRequired, mfaToken }` when 2FA is on |
+| `POST /auth/two-factor/verify` | `{ mfaToken, code }` | tokens |
+| `POST /auth/refresh` | `{ refreshToken }` (or the refresh cookie) | new tokens |
+| `POST /auth/logout` | — (authenticated) | 204, logs out **the current device only** |
+| `GET /auth/me` | — (authenticated) | the current user |
+| `POST /auth/change-password` | `{ currentPassword, newPassword }` (authenticated) | 204 |
+
+Options: `path` (default `'auth'`), `exclude: ['changePassword', ...]` to drop routes, and `cookies` (see below).
+Rate limiting, lockout, audit hooks and `{ ip, userAgent }` context are applied automatically.
+
+#### 3.2. Cookies (SPA / browser apps)
+
+Set the cookie names and the controller stores the tokens in **httpOnly** cookies instead of returning them in the body
+(requires `cookie-parser` on Express or `@fastify/cookie` on Fastify):
+
+```typescript
+AuthModule.register({
+  // ...
+  accessTokenCookieName: 'access_token',
+  refreshTokenCookieName: 'refresh_token',
+  cookieOptions: { refreshTokenPath: '/auth' }, // secure: true and sameSite: 'strict' by default
+});
+```
+
+In your own controllers use `authService.setAuthCookies(res, tokens)` and `authService.clearAuthCookies(res)`
+with `@Res({ passthrough: true }) res`.
+
+#### 3.3. Writing your own controller
+
 Expose login and refresh; use `@Public()` so these routes are not protected by the global JWT guard.
 
 ```typescript
@@ -231,6 +279,10 @@ export class SessionController {
 ```
 
 > Pass `{ ip, userAgent }` as the second argument of `login()` / `refresh()`: rate limiting becomes per IP + identifier and the context is forwarded to the audit hooks.
+> `@AuthCtx()` builds it for you: `login(@Body() body, @AuthCtx() ctx: AuthContext) { return this.authService.login(body, ctx); }`.
+>
+> `logout()` signs out **every** device. To sign out only the current one, use
+> `authService.logoutCurrentSession(user, accessToken, ctx)` with `@CurrentUser()` and `@AccessToken()`.
 
 ### 4. Authorization (RBAC)
 
@@ -481,6 +533,8 @@ revoke(@CurrentUser('id') userId: string, @Param('id') sessionId: string) {
 | `jwtAlgorithm`      | `'HS256' \| 'HS384' \| 'HS512'` | ❌     | Signing algorithm; verification accepts only this one. Default: `'HS256'`.  |
 | `clockToleranceSeconds` | `number`                  | ❌       | Clock skew tolerance when verifying tokens. Default: `0`.                   |
 | `accessTokenCookieName` | `string`                  | ❌       | Also read the access token from this cookie (requires `cookie-parser`).     |
+| `refreshTokenCookieName` | `string`                 | ❌       | Cookie for the refresh token (`setAuthCookies`, built-in controller).       |
+| `cookieOptions`     | `{ secure?, sameSite?, domain?, path?, refreshTokenPath? }` | ❌ | Cookie settings. Default: `secure: true`, `sameSite: 'strict'`, `path: '/'`. |
 | `buildPayload`      | `(user) => object`            | ❌       | Adds custom claims to the JWT (available as `request.user.claims`).         |
 | `validateJwtPayload`| `(payload, user) => user \| null` | ❌  | Extra check on every request (user still active, blacklist...).            |
 | `isUserActive`      | `(user) => boolean`           | ❌       | Blocks login/refresh for inactive users (same generic 401).                 |
@@ -518,6 +572,8 @@ revoke(@CurrentUser('id') userId: string, @Param('id') sessionId: string) {
 | `login(credentials, context?)` | Validates credentials and returns `AuthTokens`. |
 | `refresh(refreshToken, context?)` | Rotates tokens; reuse of an old token revokes every session. |
 | `logout(userId, context?, accessToken?)` | Revokes refresh tokens (`revokeAllTokens`), the given access token (with `tokenBlacklist`) and fires `onLogout`. |
+| `logoutCurrentSession(user, accessToken?, context?)` | Logs out only the current device (`revokeSession`, fallback `revokeAllTokens`). |
+| `setAuthCookies(response, tokens)` / `clearAuthCookies(response)` | Sets / clears the httpOnly token cookies. |
 | `revokeAccessToken(token)` | Revokes an access token immediately (requires `tokenBlacklist`). |
 | `changePassword(userId, current, next, context?)` | Checks the current password, stores the new hash and revokes sessions. |
 | `createPasswordResetToken(identifier)` | Single-use reset token, or `null` if the user does not exist. |
